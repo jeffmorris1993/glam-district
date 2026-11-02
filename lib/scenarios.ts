@@ -127,16 +127,20 @@ export function detectSituations(m: Metrics, s: SimState, flow: FlowState): Situ
 
   const b = m.boutique;
   const lowStock = m.inventory.items.filter((i) => b.availability[i.product.id] !== "In stock");
-  if (b.inquiries > ASSUMPTIONS.baseInquiries * 2 && lowStock.length > 0) {
+  // Low stock sharpens the story but is not required — a pure service surge
+  // (questions outpacing sales) is a playbook decision in its own right.
+  if (b.inquiries > ASSUMPTIONS.baseInquiries * 2) {
     out.push({
       key: "boutique.inquiry-surge",
       agent: "concierge",
       building: "boutique",
       headline: `Client questions are running ${(b.inquiries / ASSUMPTIONS.baseInquiries).toFixed(1)}× normal`,
-      whyItMatters: `Most of the volume is availability questions on ${lowStock.map((i) => i.product.name).join(", ")}. How the concierge answers shapes whether scarce stock becomes disappointment or a waitlist relationship.`,
+      whyItMatters: lowStock.length
+        ? `Most of the volume is availability questions on ${lowStock.map((i) => i.product.name).join(", ")}. How the concierge answers shapes whether scarce stock becomes disappointment or a waitlist relationship.`
+        : "Question volume is running far ahead of sales — a service pressure, not an operations spike. The playbook decides whether clients get standard replies, proactive promise updates, or waitlist-first handling.",
       evidence: [
         { label: "Questions", value: `${n(b.inquiries)}/day`, note: `${n(ASSUMPTIONS.baseInquiries)} base` },
-        { label: "Low stock", value: n(lowStock.length), note: "styles" },
+        ...(lowStock.length ? [{ label: "Low stock", value: n(lowStock.length), note: "styles" }] : []),
         { label: "Sessions", value: n(b.sessions) },
       ],
       tone: "watch",

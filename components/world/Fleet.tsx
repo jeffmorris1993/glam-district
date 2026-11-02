@@ -46,7 +46,11 @@ interface Vehicle {
 }
 
 /** Watch a monotonic counter on the store and fire on each increment. */
-function useTicket(pick: (s: ReturnType<typeof useStore.getState>) => number, onTick: (n: number) => void) {
+function useTicket(
+  pick: (s: ReturnType<typeof useStore.getState>) => number,
+  onTick: (n: number) => void,
+  onReset?: () => void,
+) {
   useEffect(() => {
     let last = pick(useStore.getState());
     return useStore.subscribe((s) => {
@@ -55,7 +59,8 @@ function useTicket(pick: (s: ReturnType<typeof useStore.getState>) => number, on
         for (let i = last + 1; i <= v; i++) onTick(i);
         last = v;
       } else if (v < last) {
-        last = v; // reset
+        last = v; // a preset or reset rewound the counter
+        onReset?.();
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -66,14 +71,14 @@ export function Fleet({ animate }: { animate: boolean }) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const staged = useStore((s) => s.flow.stagedParcels);
 
-  useTicket(
-    (s) => s.flow.departures,
-    (i) => setVehicles((v) => [...v.slice(-4), { id: i * 10, kind: "depart" }]),
-  );
-  useTicket(
-    (s) => s.flow.arrivals,
-    (i) => setVehicles((v) => [...v.slice(-4), { id: i * 10 + 1, kind: "arrive-in" }]),
-  );
+  // A rewound counter means the simulation was reset — any vans still driving
+  // belong to the previous run, and their ticket ids are about to be re-issued.
+  const clear = () => setVehicles([]);
+  const push = (veh: Vehicle) =>
+    setVehicles((v) => [...v.slice(-4).filter((x) => x.id !== veh.id), veh]);
+
+  useTicket((s) => s.flow.departures, (i) => push({ id: i * 10, kind: "depart" }), clear);
+  useTicket((s) => s.flow.arrivals, (i) => push({ id: i * 10 + 1, kind: "arrive-in" }), clear);
 
   const retire = (id: number) => setVehicles((v) => v.filter((x) => x.id !== id));
   const advance = (id: number) =>
