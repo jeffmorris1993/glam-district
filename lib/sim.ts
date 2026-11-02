@@ -74,7 +74,7 @@ export const DEFAULT_STATE: SimState = {
 
 /* ── Order book generation (memoized, seed-stable) ───────────────── */
 
-const MIX: [string, number][] = [
+export const MIX: [string, number][] = [
   ["soleil-mini", 0.22],
   ["praline-case", 0.17],
   ["cassis-quilted", 0.14],
@@ -86,7 +86,7 @@ const MIX: [string, number][] = [
 ];
 
 /** Add-on lines attached to surge orders (the hero style is always the primary line). */
-const SURGE_MIX: [string, number][] = [
+export const SURGE_MIX: [string, number][] = [
   ["praline-case", 0.42],
   ["etoile-scarf", 0.33],
   ["lumiere-clutch", 0.15],
@@ -160,26 +160,51 @@ export const SURGE_UNITS: Record<string, number> = (() => {
 
 const TIER_RANK = { VIP: 0, Express: 1, Standard: 2 } as const;
 
-/* ── Fulfillment ─────────────────────────────────────────────────── */
-
-function deriveFulfillment(s: SimState): FulfillmentMetrics {
-  const viral = s.scenario === "viral" && s.viralStage >= 2;
-  const book = viral ? [...BASE_BOOK, ...SURGE_BOOK] : BASE_BOOK;
-
-  const { pickers, shiftHours, unitsPerLaborHour, secondShift } = s.staffing;
-  // A second shift adds hours but carries a small productivity penalty.
-  const laborHours = pickers * shiftHours * (secondShift ? 2 : 1);
-  const capacityUnits = Math.round(laborHours * unitsPerLaborHour * (secondShift ? 0.92 : 1));
-
-  const queue: ScheduledOrder[] = book
+/** Sequencing rule: promise date, then tier, then order value. */
+const sequence = (book: Order[]) =>
+  book
     .slice()
     .sort(
       (a, b) =>
         a.promiseInDays - b.promiseInDays ||
         TIER_RANK[a.tier] - TIER_RANK[b.tier] ||
         b.value - a.value,
-    )
-    .map((o) => ({ ...o, shipDay: 0, atRisk: false, slack: 0 }));
+    );
+
+const SORTED_BASE = sequence(BASE_BOOK);
+const SORTED_VIRAL = sequence([...BASE_BOOK, ...SURGE_BOOK]);
+
+/**
+ * Live state owned by the clock in lib/engine.ts. When present the order
+ * book is truncated to the units still waiting, and on-hand inventory is
+ * reduced by what has actually been packed — so the dashboards show the
+ * same world the district is animating.
+ */
+export interface LiveState {
+  queueUnits?: number;
+  sold?: Record<string, number>;
+}
+
+/* ── Fulfillment ─────────────────────────────────────────────────── */
+
+function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
+  const viral = s.scenario === "viral" && s.viralStage >= 2;
+  const sorted = viral ? SORTED_VIRAL : SORTED_BASE;
+
+  const { pickers, shiftHours, unitsPerLaborHour, secondShift } = s.staffing;
+  // A second shift adds hours but carries a small productivity penalty.
+  const laborHours = pickers * shiftHours * (secondShift ? 2 : 1);
+  const capacityUnits = Math.round(laborHours * unitsPerLaborHour * (secondShift ? 0.92 : 1));
+
+  // The book is whatever the clock says is still waiting to be packed.
+  const limit = live?.queueUnits;
+  const queue: ScheduledOrder[] = [];
+  let taken = 0;
+  for (const o of sorted) {
+    if (limit !== undefined && taken >= limit) break;
+    queue.push({ ...o, shipDay: 0, atRisk: false, slack: 0 });
+    taken += o.units;
+  }
 
   let cum = 0;
   let atRisk = 0;
@@ -264,7 +289,7 @@ function trendFor(id: string, viral: boolean, hero: boolean) {
   return out;
 }
 
-function deriveInventory(s: SimState): InventoryMetrics {
+function deriveInventory(s: SimState, live?: LiveState): InventoryMetrics {
   const depleted = s.scenario === "viral" && s.viralStage >= 2;
   const noticed = s.scenario === "viral" && s.viralStage >= 3;
 
@@ -274,7 +299,12 @@ function deriveInventory(s: SimState): InventoryMetrics {
     const effVelocity = Math.round(product.velocity * s.demandMultiplier * spike);
     const unitsSoldToday = effVelocity;
 
-    const consumed = depleted ? SURGE_UNITS[product.id] ?? 0 : 0;
+    // Units that have actually left the building, tracked by the clock.
+    const consumed = live?.sold
+      ? live.sold[product.id] ?? 0
+      : depleted
+        ? SURGE_UNITS[product.id] ?? 0
+        : 0;
     const onHandEff = Math.max(0, product.onHand - consumed);
     const leadTime = Math.max(7, product.leadTimeDays + s.leadTimeAdj);
 
@@ -392,9 +422,9 @@ function deriveBoutique(s: SimState, inv: InventoryMetrics, ful: FulfillmentMetr
 
 /* ── Public entry point ──────────────────────────────────────────── */
 
-export function derive(s: SimState): Metrics {
-  const fulfillment = deriveFulfillment(s);
-  const inventory = deriveInventory(s);
+export function derive(s: SimState, live?: LiveState): Metrics {
+  const fulfillment = deriveFulfillment(s, live);
+  const inventory = deriveInventory(s, live);
   const boutique = deriveBoutique(s, inventory, fulfillment);
   return { fulfillment, inventory, boutique };
 }

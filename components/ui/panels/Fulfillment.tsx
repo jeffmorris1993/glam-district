@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo } from "react";
-import { useSim, useStore } from "@/lib/store";
+import { currentLive, useSim, useStore } from "@/lib/store";
 import { ASSUMPTIONS, derive } from "@/lib/sim";
+import { PARCEL_UNITS, TRUCK_LOAD, clockLabel } from "@/lib/engine";
 import { compactMoney, days, money, n, pct } from "@/lib/fmt";
 import { byId } from "@/lib/catalog";
 import { BarChart, Btn, Meter, Rule, Slider, Stat, StatusPill, Swatch, Toggle, TONE } from "../bits";
@@ -17,7 +18,11 @@ export function FulfillmentPanel() {
 
   /** The plan as it stood before the user touched the controls. */
   const baseline = useMemo(
-    () => derive({ ...sim, staffing: { pickers: 14, shiftHours: 8, unitsPerLaborHour: 14, secondShift: false } }).fulfillment,
+    () =>
+      derive(
+        { ...sim, staffing: { pickers: 14, shiftHours: 8, unitsPerLaborHour: 14, secondShift: false } },
+        currentLive(),
+      ).fulfillment,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sim.scenario, sim.viralStage, sim.demandMultiplier],
   );
@@ -57,6 +62,11 @@ export function FulfillmentPanel() {
           </div>
         </div>
       </Section>
+
+      <Rule />
+
+      {/* ── what the floor is doing right now ──────────────────── */}
+      <LiveFloor />
 
       <Rule />
 
@@ -287,5 +297,79 @@ export function FulfillmentPanel() {
         </div>
       </Section>
     </>
+  );
+}
+
+/**
+ * The live floor. These are the same figures the warehouse is animating:
+ * the belt runs at this pack rate, the pile is this queue, and a van
+ * leaves when the staged count reaches a full load.
+ */
+function LiveFloor() {
+  const flow = useStore((s) => s.flow);
+  const capacity = useStore((s) => s.metrics.fulfillment.capacityUnits);
+  const toLoad = Math.max(0, TRUCK_LOAD - flow.stagedParcels);
+  const minsToVan = flow.packRate > 0.01 ? (toLoad * PARCEL_UNITS) / flow.packRate : null;
+
+  return (
+    <Section>
+      <SubHead
+        title="On the floor now"
+        note="The warehouse animates these numbers — belt speed, pile height and the next dispatch."
+        right={
+          <span className="num flex items-center gap-1.5 text-[10px] text-[#A3927C]">
+            <span
+              className={`h-[5px] w-[5px] rounded-full ${flow.inShift ? "a-breathe" : ""}`}
+              style={{ background: flow.inShift ? TONE.healthy.dot : "#BCAB95" }}
+            />
+            {clockLabel(flow.minute).label}
+          </span>
+        }
+      />
+
+      <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4">
+        <Stat
+          label="Pack rate"
+          value={flow.inShift ? `${n(flow.packRate * 60)}/hr` : "Stopped"}
+          note={flow.inShift ? "units leaving the belt" : "floor closed — queue is growing"}
+          tone={flow.inShift ? "healthy" : "watch"}
+          size="sm"
+        />
+        <Stat label="Intake" value={`${n(flow.inflowRate * 60)}/hr`} note="units arriving" size="sm" />
+        <Stat label="Packed today" value={n(flow.packedToday)} note="units" size="sm" />
+        <Stat
+          label="Vans dispatched"
+          value={n(flow.trucksToday)}
+          note={`${n(flow.shippedToday)} parcels today`}
+          size="sm"
+        />
+      </div>
+
+      <div className="mt-4 rounded-[2px] border border-[rgba(58,43,35,.08)] bg-[rgba(255,255,255,.5)] px-3.5 py-3">
+        <div className="flex items-baseline justify-between">
+          <span className="label text-[9.5px] text-[#8C7B66]">Next dispatch</span>
+          <span className="num text-[11px] text-[var(--espresso)]">
+            {n(flow.stagedParcels)} / {TRUCK_LOAD} parcels staged
+          </span>
+        </div>
+        <div className="mt-2">
+          <Meter value={flow.stagedParcels / TRUCK_LOAD} tone="healthy" height={5} />
+        </div>
+        <div className="mt-2 text-[10.5px] text-[#A3927C]">
+          {minsToVan === null
+            ? "No van will leave while the floor is closed — parcels only stage while packing runs."
+            : `A van departs when the pile reaches a full load, about ${n(minsToVan)} simulated minutes away at the current pack rate.`}
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-baseline justify-between text-[10.5px] text-[#9C8B76]">
+        <span>
+          Queue <span className="num text-[var(--espresso)]">{n(flow.queueUnits)}</span> units
+        </span>
+        <span>
+          Capacity <span className="num text-[var(--espresso)]">{n(capacity)}</span> units/day
+        </span>
+      </div>
+    </Section>
   );
 }

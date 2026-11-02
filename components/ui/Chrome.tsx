@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
-import { AGENTS } from "@/lib/agents";
 import { SITES } from "@/components/world/palette";
+import { KIND_LABEL } from "@/lib/engine";
 import type { BuildingId, WorldStatus } from "@/lib/types";
 import { Btn, GoldRule, TONE } from "./bits";
 
@@ -285,7 +285,7 @@ export function Toast() {
           <div className="min-w-0">
             <div className="flex items-baseline gap-2">
               <span className="eyebrow text-[8px] text-[#A3927C]">
-                {ev ? `Stage 0${ev.stage}` : "Event"}
+                {ev ? KIND_LABEL[ev.kind] : "Event"}
               </span>
               {ev && (
                 <span className="eyebrow text-[8px] text-[var(--gold)]">
@@ -299,58 +299,6 @@ export function Toast() {
           </div>
         </div>
       </button>
-    </div>
-  );
-}
-
-/* ── Event feed ───────────────────────────────────────────────────── */
-
-export function EventFeed() {
-  const events = useStore((s) => s.events);
-  const phase = useStore((s) => s.phase);
-  const focusBuilding = useStore((s) => s.focusBuilding);
-  const openAgentPanel = useStore((s) => s.openAgentPanel);
-  if (phase !== "district" || events.length === 0) return null;
-
-  return (
-    <div className="pointer-events-none absolute bottom-24 left-5 z-30 w-[300px] sm:left-7 sm:bottom-28">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="eyebrow text-[8.5px] text-[#A3927C]">Event Log</span>
-        <div className="h-px flex-1 bg-[rgba(58,43,35,.12)]" />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        {events.map((e, i) => {
-          const tone: WorldStatus = e.tone === "alert" ? "critical" : e.tone === "watch" ? "watch" : "healthy";
-          return (
-            <button
-              key={e.id}
-              type="button"
-              onClick={() => {
-                focusBuilding(e.building);
-                openAgentPanel(e.agent);
-              }}
-              className="card pointer-events-auto group flex w-full items-start gap-2.5 rounded-[2px] px-3 py-2.5 text-left transition-all duration-300 hover:-translate-y-px hover:border-[var(--champagne)]"
-              style={{ animation: `fadeUp .6s var(--ease) ${i * 0.05}s both` }}
-            >
-              <span className="mt-[5px] h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: TONE[tone].dot }} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="eyebrow text-[7.5px] text-[#A3927C]">
-                    {SITES[e.building].name.replace("The ", "")}
-                  </span>
-                  <span className="num text-[9px] text-[#BCAB95]">0{e.stage}</span>
-                </span>
-                <span className="mt-0.5 block text-[11.5px] font-medium leading-snug text-[var(--espresso)]">
-                  {e.title}
-                </span>
-                <span className="label mt-1 block text-[8.5px] text-[var(--gold)] opacity-0 transition-opacity group-hover:opacity-100">
-                  Open {AGENTS[e.agent].name}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -371,7 +319,7 @@ export function Hint() {
 
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 top-[92px] z-20 flex justify-center px-5 transition-all duration-700 md:top-[92px]"
+      className="pointer-events-none absolute inset-x-0 bottom-[84px] z-20 flex justify-center px-5 transition-all duration-700"
       style={{
         opacity: show ? 1 : 0,
         transform: show ? "none" : "translateY(-8px)",

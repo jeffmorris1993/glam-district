@@ -121,6 +121,8 @@ function pathLength(p: Path) {
   return L;
 }
 
+export type WalkMode = "loop" | "pingpong" | "once";
+
 export function Walker({
   path,
   look,
@@ -129,8 +131,9 @@ export function Walker({
   scale = 1,
   carrying = null,
   animate = true,
-  pingPong = false,
+  mode = "loop",
   pauseAt,
+  onDone,
 }: {
   path: Path;
   look: FigureLook;
@@ -139,13 +142,15 @@ export function Walker({
   scale?: number;
   carrying?: "bag" | "parcel" | "tablet" | "swatch" | null;
   animate?: boolean;
-  pingPong?: boolean;
+  mode?: WalkMode;
   /** fraction of the loop spent standing still at the end of the path */
   pauseAt?: number;
+  onDone?: () => void;
 }) {
   const ref = useRef<Group>(null);
   const inner = useRef<Group>(null);
   const t = useRef(phase);
+  const finished = useRef(false);
   const total = useMemo(() => pathLength(path), [path]);
   const segs = useMemo(() => {
     const out: { a: [number, number]; b: [number, number]; len: number; acc: number }[] = [];
@@ -160,39 +165,64 @@ export function Walker({
 
   useFrame((_, dt) => {
     if (!ref.current) return;
-    if (animate) t.current += (dt * speed) / Math.max(0.001, total);
-    let u = t.current % 1;
-    const pause = pauseAt ?? 0;
-    if (pause > 0) {
-      const active = 1 - pause;
-      u = u < active ? u / active : 1;
+    const step = Math.min(0.05, dt);
+    if (animate && !(mode === "once" && finished.current)) {
+      t.current += (step * speed) / Math.max(0.001, total);
     }
-    if (pingPong) u = u < 0.5 ? u * 2 : (1 - u) * 2;
+
+    let u: number;
+    let reversed = false;
+
+    if (mode === "once") {
+      u = Math.min(1, t.current);
+      if (u >= 1 && !finished.current) {
+        finished.current = true;
+        onDone?.();
+      }
+    } else if (mode === "pingpong") {
+      const c = t.current % 1;
+      // Walking the path back the other way means turning round, not moonwalking.
+      reversed = c >= 0.5;
+      u = reversed ? (1 - c) * 2 : c * 2;
+    } else {
+      u = t.current % 1;
+      const pause = pauseAt ?? 0;
+      if (pause > 0) {
+        const active = 1 - pause;
+        u = u < active ? u / active : 1;
+      }
+    }
 
     const dist = u * total;
     let seg = segs[segs.length - 1];
-    for (const s of segs) {
-      if (dist <= s.acc + s.len) {
-        seg = s;
+    for (const sgm of segs) {
+      if (dist <= sgm.acc + sgm.len) {
+        seg = sgm;
         break;
       }
     }
+    if (!seg) return;
     const local = seg.len === 0 ? 0 : (dist - seg.acc) / seg.len;
-    const x = seg.a[0] + (seg.b[0] - seg.a[0]) * local;
-    const z = seg.a[1] + (seg.b[1] - seg.a[1]) * local;
-    ref.current.position.set(x, 0, z);
-    const ang = Math.atan2(seg.b[0] - seg.a[0], seg.b[1] - seg.a[1]);
-    // ease toward heading so corners are not snapped
+    ref.current.position.set(
+      seg.a[0] + (seg.b[0] - seg.a[0]) * local,
+      0,
+      seg.a[1] + (seg.b[1] - seg.a[1]) * local,
+    );
+
+    // The figure is modelled facing +Z.
+    const dx = (seg.b[0] - seg.a[0]) * (reversed ? -1 : 1);
+    const dz = (seg.b[1] - seg.a[1]) * (reversed ? -1 : 1);
+    const ang = Math.atan2(dx, dz);
     const cur = ref.current.rotation.y;
     let d = ang - cur;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    ref.current.rotation.y = cur + d * Math.min(1, dt * 6);
+    ref.current.rotation.y = cur + d * Math.min(1, step * 6);
 
     if (inner.current) {
-      const moving = !(pause > 0 && u >= 1);
-      inner.current.position.y = animate && moving ? Math.abs(Math.sin(t.current * total * 7.5)) * 0.012 : 0;
-      inner.current.rotation.z = animate && moving ? Math.sin(t.current * total * 7.5) * 0.03 : 0;
+      const moving = animate && !(mode === "once" && finished.current) && !(pauseAt && u >= 1);
+      inner.current.position.y = moving ? Math.abs(Math.sin(t.current * total * 7.5)) * 0.012 : 0;
+      inner.current.rotation.z = moving ? Math.sin(t.current * total * 7.5) * 0.03 : 0;
     }
   });
 

@@ -27,6 +27,9 @@ export function Selectable({
   children: ReactNode;
   disabled?: boolean;
 }) {
+  // Once you are inside a building, the shell stops swallowing clicks so the
+  // objects on the floor can be inspected.
+  const inside = useStore((st) => st.phase === "building" && st.focus === id);
   const lift = useRef<Group>(null);
   const frame = useRef<LineSegments>(null);
   const halo = useRef<Mesh>(null);
@@ -78,7 +81,7 @@ export function Selectable({
       </group>
 
       {/* hit volume — generous, invisible */}
-      {!disabled && (
+      {!disabled && !inside && (
         <mesh
           position={[0, height / 2, 0]}
           onPointerOver={(e) => {

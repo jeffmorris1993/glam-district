@@ -1,5 +1,5 @@
 import { DEMO_ORDERS, HERO_ID, POLICIES, PRODUCTS, byId } from "./catalog";
-import { ASSUMPTIONS, derive, shipWindow } from "./sim";
+import { ASSUMPTIONS, derive, shipWindow, type LiveState } from "./sim";
 import { compactMoney, days, money, n, pct } from "./fmt";
 import type { AgentId, Metrics, SimState } from "./types";
 
@@ -35,8 +35,9 @@ function firstNumber(q: string): number | null {
 const has = (q: string, ...terms: string[]) => terms.some((t) => q.includes(t));
 
 /** Smallest picker count that clears every promise, or null if out of range. */
-function pickersToClear(s: SimState, max = 120): number | null {
-  const risk = (p: number) => derive({ ...s, staffing: { ...s.staffing, pickers: p } }).fulfillment.atRisk;
+function pickersToClear(s: SimState, live: LiveState, max = 120): number | null {
+  const risk = (p: number) =>
+    derive({ ...s, staffing: { ...s.staffing, pickers: p } }, live).fulfillment.atRisk;
   if (risk(s.staffing.pickers) === 0) return s.staffing.pickers;
   if (risk(max) > 0) return null;
   let lo = s.staffing.pickers;
@@ -60,7 +61,7 @@ function matchProduct(q: string) {
 
 /* ── Fulfillment Analyst ─────────────────────────────────────────── */
 
-function analystReply(q: string, m: Metrics, s: SimState): AgentReply {
+function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): AgentReply {
   const f = m.fulfillment;
   const avgUnits = f.openUnits / Math.max(1, f.openOrders);
   const plan = `Pick plan · ${s.staffing.pickers} associates × ${s.staffing.shiftHours}h${s.staffing.secondShift ? " × 2 shifts" : ""}`;
@@ -70,8 +71,8 @@ function analystReply(q: string, m: Metrics, s: SimState): AgentReply {
     const delta = firstNumber(q) ?? 5;
     const dir = has(q, "remove", "cut", "fewer", "lose") ? -1 : 1;
     const next = Math.max(1, Math.min(60, s.staffing.pickers + dir * delta));
-    const alt = derive({ ...s, staffing: { ...s.staffing, pickers: next } }).fulfillment;
-    const clear = pickersToClear(s);
+    const alt = derive({ ...s, staffing: { ...s.staffing, pickers: next } }, live).fulfillment;
+    const clear = pickersToClear(s, live);
     const riskDelta = f.atRisk - alt.atRisk;
     return {
       text:
@@ -132,9 +133,9 @@ function analystReply(q: string, m: Metrics, s: SimState): AgentReply {
 
   // "create tomorrow's plan"
   if (has(q, "plan", "tomorrow", "schedule", "shift", "roster", "next day")) {
-    const clear = pickersToClear(s);
+    const clear = pickersToClear(s, live);
     const target = clear ?? s.staffing.pickers;
-    const alt = derive({ ...s, staffing: { ...s.staffing, pickers: target } }).fulfillment;
+    const alt = derive({ ...s, staffing: { ...s.staffing, pickers: target } }, live).fulfillment;
     return {
       text:
         `Tomorrow's plan, computed from the current book:\n\n` +
@@ -155,7 +156,8 @@ function analystReply(q: string, m: Metrics, s: SimState): AgentReply {
         `plus ${money(ASSUMPTIONS.fixedOverheadDay)} of fixed facility overhead and ${money(ASSUMPTIONS.packagingPerOrder, 2)} of packaging per order. ` +
         `Against ${n(f.shippedToday)} orders shipped that is ${money(f.costPerOrder, 2)} per order. ` +
         `Adding capacity lowers the fixed-cost share: the same question at ${s.staffing.pickers + 6} associates gives ` +
-        `${money(derive({ ...s, staffing: { ...s.staffing, pickers: s.staffing.pickers + 6 } }).fulfillment.costPerOrder, 2)}.`,
+        `${money(derive({ ...s, staffing: { ...s.staffing, pickers: s.staffing.pickers + 6 } }, live).fulfillment
+        .costPerOrder, 2)}.`,
       refs: [plan, `Cost model · labour + overhead + packaging`],
     };
   }
@@ -171,7 +173,7 @@ function analystReply(q: string, m: Metrics, s: SimState): AgentReply {
 
 /* ── Inventory Strategist ────────────────────────────────────────── */
 
-function strategistReply(q: string, m: Metrics, s: SimState): AgentReply {
+function strategistReply(q: string, m: Metrics, s: SimState, live: LiveState): AgentReply {
   const inv = m.inventory;
   const assume = `Assumptions · ${s.demandMultiplier.toFixed(2)}× demand, ${s.coverDays}-day cover`;
   const named = matchProduct(q);
@@ -179,7 +181,7 @@ function strategistReply(q: string, m: Metrics, s: SimState): AgentReply {
   // "what happens if demand doubles" / halves
   if (has(q, "double", "doubles", "triple", "halve", "half", "demand", "forecast", "if sales")) {
     const factor = has(q, "triple") ? 3 : has(q, "halve", "half") ? 0.5 : 2;
-    const alt = derive({ ...s, demandMultiplier: s.demandMultiplier * factor }).inventory;
+    const alt = derive({ ...s, demandMultiplier: s.demandMultiplier * factor }, live).inventory;
     const gone = alt.critical.slice(0, 4).map((i) => `${i.product.name} (${i.stockoutInDays.toFixed(0)}d)`);
     return {
       text:
@@ -481,9 +483,15 @@ function conciergeReply(q: string, m: Metrics): AgentReply {
 
 /* ── Entry point ─────────────────────────────────────────────────── */
 
-export function respond(agent: AgentId, question: string, m: Metrics, s: SimState): AgentReply {
+export function respond(
+  agent: AgentId,
+  question: string,
+  m: Metrics,
+  s: SimState,
+  live: LiveState,
+): AgentReply {
   const q = question.toLowerCase().trim();
-  if (agent === "analyst") return analystReply(q, m, s);
-  if (agent === "strategist") return strategistReply(q, m, s);
+  if (agent === "analyst") return analystReply(q, m, s, live);
+  if (agent === "strategist") return strategistReply(q, m, s, live);
   return conciergeReply(q, m);
 }

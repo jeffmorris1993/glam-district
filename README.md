@@ -26,61 +26,106 @@ from it.
 
 ### The hero moment — *Simulate a Viral Drop*
 
-One control runs a four-stage event across the whole district:
+One control runs a four-stage event across the whole district. Only stage two moves
+physical state; everything after it is consequence:
 
-1. **Boutique** — sessions jump 4.2×; one style starts moving.
-2. **Fulfillment House** — 2,900 orders land; the pick plan re-runs and the
-   warehouse status turns red.
-3. **Buying Atelier** — the hero style's cover collapses to ~3 days against a
-   34-day lead time; a reorder scenario is staged.
-4. **Glam Concierge** — inquiry volume triples and the concierge switches to
-   low-stock language, quoting the ship window from the live pick plan.
+1. **Boutique** — sessions jump 4.2×. More shoppers arrive on the pavement. Nothing
+   downstream has reacted yet.
+2. **Fulfillment House** — the surge converts. 2,900 orders land in the queue, the pile
+   at the packing stations jumps, and the status band turns red.
+3. **Buying Atelier** — those units come out of racking. Cover on the hero style
+   collapses below the 34-day lead time and the strategist moves to the trend wall.
+4. **Glam Concierge** — inquiry volume triples; the concierge switches to low-stock
+   language and quotes the ship window from the live pick plan.
 
-Every building can be opened mid-event to investigate what changed.
-**Reset Simulation** returns the whole world to its opening state.
+Every building can be opened mid-event to investigate what changed, and the timeline
+records each stage with its cause. **Reset Simulation** returns the whole world — clock,
+queue, inventory and event log — to its opening state.
 
 ---
 
-## The part that matters: one dataset, three views
+## The part that matters: one clock, one dataset
 
-There is a single synthetic business state in [`lib/sim.ts`](lib/sim.ts). All three
-workspaces and all three agents read from it, so the story stays coherent:
+There is a single synthetic business state, and **everything else is a readout of it** —
+both the dashboards and the 3D world.
+
+- [`lib/sim.ts`](lib/sim.ts) is the pure calculation layer: `derive(state, live)` maps
+  the control inputs and the live operational position to every metric on screen.
+- [`lib/engine.ts`](lib/engine.ts) is the **district clock**. It advances the business
+  five simulated minutes at a time, moves physical state, and emits discrete events.
 
 ```
-a style sells  →  on-hand falls  →  days of cover drop   (Atelier)
-               →  an order joins the queue               (Fulfillment)
-               →  the book takes longer to clear         (Fulfillment)
-               →  the quoted ship window moves           (Boutique)
-               →  the concierge changes what it promises (Concierge)
+intake    orders arrive around the clock        →  queueUnits +=
+packing   capacity exists only during the shift →  queueUnits −=, staged +=
+                                                   on-hand stock −= (by style)
+dispatch  staged reaches a full 210-parcel load →  a van departs
+receiving an open PO reaches its ETA            →  a van arrives, cover restored
 ```
 
-**All figures are deterministic.** A seeded RNG (`mulberry32`) builds a stable
-order book once; `derive(state)` is a pure function from the control inputs to
-every metric on screen. Agents narrate those numbers — they never invent them.
-There is no model call and no API key anywhere in this prototype.
+Each loop produces events with their own causal explanation, and the world reads the
+same state the dashboards do:
+
+| In the world | Driven by |
+| --- | --- |
+| Conveyor speed and occupancy | live pack rate (stops when the shift closes) |
+| Pile at the packing stations | `queueUnits` — one box ≈ 230 waiting units |
+| Lit stations and packers | the staffing control |
+| Pickers walking the aisles | the staffing control |
+| Dock shutters open | shift state + staffing |
+| Pile on the dock | staged parcels building toward the next load |
+| A van pulling out | a **dispatch event** — never a timer |
+| A van arriving | a purchase order reaching its ETA |
+| Status band colour at each roofline | that building's computed status |
+| Shoppers arriving at the boutique | session volume |
+| Shoppers leaving with a bag | conversion |
+| Concierge turning to the door | inquiry volume |
+| Strategist at the trend wall vs. the desk | whether a style is below lead-time cover |
+
+Ambient motion is limited to atmosphere that makes no business claim: tree sway, lamp
+glow, still water, two people crossing the district.
+
+**Nothing in the world runs on its own schedule.** Change the staffing slider and the
+belt speeds up, the pile drains, loads complete sooner and vans leave more often. Close
+the shift and the belt stops, the pile grows overnight and no van leaves at all.
+
+### Click anything
+
+Every animated system has a hit area. Clicking it opens an inspector with the live
+figures, **what you are watching**, **why it is doing that**, and the most recent event
+that drove it — conveyor, packing stations, the backlog pile, the dock, the fleet, the
+racking, the boutique floor, the window display, the sample table and the trend wall.
+
+### The district timeline
+
+A running log across all three buildings, newest first — intake, dispatch, bottlenecks,
+shift open/close, inventory crossings, replenishment landings, client conversations and
+staffing changes. Each entry carries its magnitude and its cause, and clicking one jumps
+to the object that produced it.
+
+### Determinism
+
+A seeded RNG (`mulberry32`) builds a stable order book once; `derive()` is pure. The
+clock integrates that state forward. Agents narrate those numbers — they never invent
+them. There is no model call and no API key anywhere in this prototype.
 
 ### The model, briefly
 
 | Quantity | How it is computed |
 | --- | --- |
 | Daily capacity | `pickers × shiftHours × unitsPerLaborHour` (×2 and ×0.92 on a second shift) |
-| Ship day | Queue sorted by promise date → tier → value; cumulative units ÷ capacity |
+| Pack rate | capacity spread across the shift; zero outside it |
+| Open book | the sequenced order book, truncated to the units still queued |
+| Ship day | promise date → tier → value; cumulative units ÷ capacity |
 | At risk | `shipDay > promiseInDays` |
 | Cost per order | `(labour + fixed overhead) ÷ orders shipped + packaging` |
+| On hand | catalogue stock minus units actually packed, attributed by sales mix |
 | Days of cover | `(on hand + in transit) ÷ effective daily velocity` |
 | Risk band | `cover < leadTime` → critical · `< leadTime + coverDays` → watch |
-| Suggested reorder | `planVelocity × (leadTime + coverDays) − onHand − inbound`, rounded to case pack |
-| Ship window quoted | Derived from the live backlog in the pick plan |
+| Suggested reorder | `planVelocity × (leadTime + coverDays) − onHand − inbound`, to case pack |
+| Ship window quoted | derived from the live backlog in the pick plan |
 
-`planVelocity` deliberately assumes a spike **settles** (2.4× baseline, not 14×),
-so the buy scenario is a plausible plan rather than an extrapolation of one good day.
-
-Every control is live and monotonic — move the staffing slider and the queue,
-the risk count, the day-by-day chart and the cost per order all re-derive;
-move the demand or lead-time assumption and every cover figure and reorder
-quantity follows.
-
----
+`planVelocity` deliberately assumes a spike **settles** (2.4× baseline, not 14×), so the
+buy scenario is a plausible plan rather than an extrapolation of one good day.
 
 ## Agent behaviour
 
@@ -116,10 +161,8 @@ Real-time React Three Fiber, not a pre-rendered image.
   above: racking, conveyor, packing stations, mood boards, vitrines, a chandelier.
 - Materials: marble, warm stone, brushed champagne, warm glass, soft interior
   light, PCF shadows and a local lightformer environment (no network fetches).
-- Animation represents the simulated state: the conveyor speeds up when the
-  backlog grows, dock shutters open on busy bays, the boutique crowd grows during
-  the event, agent beacons take the colour of their building's status, and a
-  status band at each roofline turns sage → amber → red.
+- Every animation is a readout of the clock (see the table above); ambient motion is
+  limited to tree sway, lamp glow and still water.
 - Hovering a building raises it, draws a soft gold edge outline and a ground halo,
   and opens a nameplate with the live status.
 
@@ -157,15 +200,18 @@ app/
   layout.tsx             fonts + metadata
 lib/
   catalog.ts             fictional products, policies, demo orders, name pools
-  sim.ts                 the deterministic engine — every number starts here
-  store.ts               shared state, viral-drop choreography, event log
+  sim.ts                 the pure calculation layer — derive(state, live)
+  engine.ts              the district clock: ticks, events, inspector copy
+  store.ts               shared state, the clock driver, viral-drop choreography
   agents.ts              agent identities and live briefs
   answers.ts             scripted response engine (with real what-if math)
 components/
   World.tsx              canvas, tone mapping, backdrop
   world/                 palette, camera rig, ground, props, the three buildings,
-                         miniature figures, hover nameplates
+                         miniature figures, hover nameplates, the fleet,
+                         client traffic, inspectable hit areas
   ui/                    arrival screen, chrome, workspace, agent panel,
+                         object inspector, district timeline,
                          interface primitives, the three operational panels
 ```
 
@@ -179,8 +225,9 @@ function, and the UI reads from one store. Natural next steps:
 
 - Swap the hand-built geometry for authored glTF assets (same component
   boundaries, same scene graph) and add a lightmap bake for the interiors.
-- Replace `lib/sim.ts` with a server boundary that reads real operational data,
-  keeping `derive()` as the calculation layer so dashboards stay deterministic.
+- Replace the clock in `lib/engine.ts` with a stream of real operational events,
+  keeping `derive()` as the calculation layer so dashboards stay deterministic and the
+  world keeps animating from the same state.
 - Keep the agents reading computed metrics and let a model handle only language —
   the pattern this demo already follows, which is what keeps the numbers honest.
 

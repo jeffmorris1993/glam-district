@@ -1,11 +1,12 @@
 "use client";
 
 import { ContactShadows, Environment, Lightformer } from "@react-three/drei";
-import { C } from "./palette";
 import { CameraRig } from "./CameraRig";
 import { Ground } from "./Ground";
-import { Bench, DeliveryVan, LampPost, Planter, Topiary, Tree } from "./Props";
+import { Bench, LampPost, Planter, Topiary, Tree } from "./Props";
 import { Walker, lookFor } from "./Figures";
+import { Fleet } from "./Fleet";
+import { Shoppers } from "./Shoppers";
 import { FulfillmentHouse } from "./FulfillmentHouse";
 import { BuyingAtelier } from "./BuyingAtelier";
 import { GlamBoutique } from "./GlamBoutique";
@@ -126,78 +127,36 @@ function Landscape({ animate }: { animate: boolean }) {
   );
 }
 
-function CityLife({ animate }: { animate: boolean }) {
+/* ─────────────────────────────────────────────────────────────────
+   Ambient life only. Vehicles and client traffic are driven by the
+   clock (see Fleet and Shoppers); these two figures are atmosphere —
+   people crossing a district — and make no business claim.
+   ───────────────────────────────────────────────────────────────── */
+function Ambient({ animate }: { animate: boolean }) {
   return (
-    <group>
-      {/* vehicles on the boulevard */}
-      <DeliveryVan animate={animate} speed={1} phase={0.1} color={C.porcelain} />
-      <DeliveryVan animate={animate} speed={0.78} phase={0.62} color={C.blush} />
-
-      {/* people on the sidewalk and in the courtyard */}
-      <group position={[0, 0.19, 0]}>
-        <Walker
-          animate={animate}
-          path={[
-            [-15, 7.1],
-            [15, 7.1],
-          ]}
-          look={lookFor(1)}
-          carrying="bag"
-          speed={0.62}
-          pingPong
-        />
-        <Walker
-          animate={animate}
-          path={[
-            [14, 6.6],
-            [-14, 6.6],
-          ]}
-          look={lookFor(6)}
-          speed={0.52}
-          phase={0.3}
-          pingPong
-        />
-        <Walker
-          animate={animate}
-          path={[
-            [-6, 2.2],
-            [-0.4, 2.2],
-            [3.2, 2.2],
-            [8.4, 5.2],
-          ]}
-          look={lookFor(11)}
-          carrying="bag"
-          speed={0.46}
-          phase={0.15}
-          pingPong
-        />
-        <Walker
-          animate={animate}
-          path={[
-            [2.2, -1.4],
-            [2.2, 3.4],
-            [-0.4, 5.6],
-            [-6.2, 5.2],
-          ]}
-          look={lookFor(14)}
-          speed={0.4}
-          phase={0.55}
-          pingPong
-        />
-        <Walker
-          animate={animate}
-          path={[
-            [-9.6, 3.2],
-            [-5.2, 2.4],
-            [-0.6, 4.9],
-          ]}
-          look={lookFor(17)}
-          carrying="parcel"
-          speed={0.44}
-          phase={0.8}
-          pingPong
-        />
-      </group>
+    <group position={[0, 0.19, 0]}>
+      <Walker
+        animate={animate}
+        mode="pingpong"
+        path={[
+          [-15, 7.1],
+          [1.5, 7.1],
+        ]}
+        look={lookFor(1)}
+        speed={0.55}
+      />
+      <Walker
+        animate={animate}
+        mode="pingpong"
+        path={[
+          [-6, 2.2],
+          [-0.4, 2.2],
+          [3.2, 2.2],
+        ]}
+        look={lookFor(11)}
+        speed={0.42}
+        phase={0.35}
+      />
     </group>
   );
 }
@@ -213,7 +172,9 @@ export function Scene({ reduced, compact }: { reduced: boolean; compact: boolean
       <group>
         <Ground />
         <Landscape animate={animate} />
-        <CityLife animate={animate} />
+        <Ambient animate={animate} />
+        <Fleet animate={animate} />
+        <Shoppers animate={animate} />
 
         <FulfillmentHouse animate={animate} />
         <BuyingAtelier animate={animate} />

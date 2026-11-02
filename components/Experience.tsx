@@ -1,10 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import "@/lib/store";
 import { Arrival } from "./ui/Arrival";
-import { CornerCredit, EventFeed, Hint, ScenarioBar, Toast, TopBar } from "./ui/Chrome";
+import { CornerCredit, Hint, ScenarioBar, Toast, TopBar } from "./ui/Chrome";
 import { Workspace, ProductSheet } from "./ui/Workspace";
 import { AgentPanel } from "./ui/AgentPanel";
+import { Inspector } from "./ui/Inspector";
+import { Timeline, TimelineToggle } from "./ui/Timeline";
 
 const World = dynamic(() => import("./World"), {
   ssr: false,
@@ -43,12 +46,14 @@ export function Experience() {
 
       <TopBar />
       <Hint />
-      <EventFeed />
+      <TimelineToggle />
+      <Timeline />
       <ScenarioBar />
       <CornerCredit />
 
       <Workspace />
       <AgentPanel />
+      <Inspector />
       <ProductSheet />
       <Toast />
 

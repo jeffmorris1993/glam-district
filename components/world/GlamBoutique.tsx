@@ -3,13 +3,15 @@
 import { useRef } from "react";
 import { RoundedBox } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import type { Mesh } from "three";
+import type { Group, Mesh } from "three";
 import { useStore } from "@/lib/store";
 import { C, SITES, STATUS_COLOR } from "./palette";
 import { Fabric, Glass, Lit, Marble, Metal, Stone, Wood } from "./Mats";
 import { Handbag } from "./Props";
 import { Figure, StatusBeacon, Walker, lookFor } from "./Figures";
 import { AgentHit, Selectable } from "./Selectable";
+import { Inspectable } from "./Inspectable";
+import { damp } from "@/lib/motion";
 
 const SITE = SITES.boutique;
 const W = 8;
@@ -174,13 +176,14 @@ function BladeSign({ pulse }: { pulse: boolean }) {
 
 export function GlamBoutique({ animate }: { animate: boolean }) {
   const status = useStore((s) => s.metrics.boutique.status);
-  const traffic = useStore((s) => s.scenario === "viral" && s.viralStage >= 1);
+  const traffic = useStore((s) => s.metrics.boutique.sessions > 40000);
+  /* How many clients are browsing inside is a readout of session volume. */
+  const browsing = useStore((s) =>
+    Math.max(1, Math.min(4, Math.round(s.metrics.boutique.sessions / 26000))),
+  );
   const statusColor = STATUS_COLOR[status];
 
   const floorY = 0.36;
-
-  /* Shoppers: a steady trickle at baseline, a crowd during the event. */
-  const shoppers = traffic ? 9 : 4;
 
   return (
     <group position={SITE.pos}>
@@ -287,7 +290,9 @@ export function GlamBoutique({ animate }: { animate: boolean }) {
 
         {/* ── window vitrines ────────────────────────────────── */}
         <group position={[0, floorY, 0]}>
-          <Vitrine position={[-2.1, 0, D / 2 - 0.85]} colors={[C.champagne, C.rose, C.espresso]} />
+          <Inspectable target="vitrine" size={[2.4, 1.2, 1.2]} position={[-2.1, 0, D / 2 - 0.85]}>
+            <Vitrine position={[0, 0, 0]} colors={[C.champagne, C.rose, C.espresso]} />
+          </Inspectable>
           <Vitrine position={[W / 2 - 0.85, 0, -1.9]} rotation={Math.PI / 2} colors={[C.porcelain, C.sage, C.blush]} />
         </group>
 
@@ -399,106 +404,91 @@ export function GlamBoutique({ animate }: { animate: boolean }) {
         <pointLight position={[0, floorY + 2.3, 0.6]} intensity={7} distance={9} decay={2} color="#FFE4B8" />
         <pointLight position={[0, floorY + 1.3, D / 2 - 1]} intensity={3} distance={6} decay={2} color="#FFE4B8" />
 
-        {/* ── shoppers ───────────────────────────────────────── */}
-        {/* approaching the door along the forecourt */}
-        <group position={[0, 0.09, 0]}>
-          {Array.from({ length: shoppers }, (_, i) => (
-            <Walker
-              key={i}
-              animate={animate}
-              path={[
-                [-3.4 + (i % 3) * 1.1, 5.6],
-                [-0.6 + (i % 4) * 0.4, 4.9],
-                [0.1, 3.9],
-              ]}
-              look={lookFor(i + 2)}
-              carrying={i % 2 === 0 ? "bag" : null}
-              speed={0.42 + (i % 3) * 0.07}
-              phase={(i / shoppers) * 0.9}
-              scale={0.96}
-              pingPong
-            />
-          ))}
-        </group>
-        {/* browsing inside */}
-        <group position={[0, floorY, 0]}>
-          <Walker
-            animate={animate}
-            path={[
-              [1.2, 2.3],
-              [2.1, 0.2],
-              [-0.9, -0.6],
-              [-2.4, 0.9],
-              [1.2, 2.3],
-            ]}
-            look={lookFor(7)}
-            carrying="bag"
-            speed={0.4}
-            scale={0.97}
-          />
-          <Walker
-            animate={animate}
-            path={[
-              [-2.3, 1.7],
-              [-2.3, -0.9],
-              [0.6, -1.3],
-              [-2.3, 1.7],
-            ]}
-            look={lookFor(12)}
-            speed={0.34}
-            phase={0.5}
-            scale={0.95}
-          />
-          {traffic && (
-            <>
+        {/* ── clients browsing inside: count tracks session volume ── */}
+        <Inspectable target="floor" size={[6.4, 1.3, 5.4]} position={[0, floorY, 0.4]}>
+          <group>
+            {BROWSE_ROUTES.slice(0, browsing).map((path, i) => (
               <Walker
+                key={i}
                 animate={animate}
-                path={[
-                  [2.6, 2.6],
-                  [0.4, 2.2],
-                  [-1.8, 2.5],
-                  [2.6, 2.6],
-                ]}
-                look={lookFor(15)}
-                carrying="bag"
-                speed={0.46}
-                phase={0.2}
+                path={path}
+                look={lookFor(i * 5 + 7)}
+                carrying={i % 2 === 0 ? "bag" : null}
+                speed={0.36 + i * 0.05}
+                phase={i * 0.31}
                 scale={0.96}
               />
-              <Walker
-                animate={animate}
-                path={[
-                  [2.3, -1.5],
-                  [-1.4, -1.6],
-                  [-2.5, 0.4],
-                  [2.3, -1.5],
-                ]}
-                look={lookFor(18)}
-                speed={0.38}
-                phase={0.7}
-                scale={0.94}
-              />
-            </>
-          )}
-          {/* a client seated at the counter */}
-          <group position={[-2.6, 0, -1.1]} rotation={[0, Math.PI, 0]}>
-            <Figure look={lookFor(5)} scale={0.97} carrying="bag" />
+            ))}
+            <group position={[-2.6, 0, -1.1]} rotation={[0, Math.PI, 0]}>
+              <Figure look={lookFor(5)} scale={0.97} carrying="bag" />
+            </group>
           </group>
-        </group>
+        </Inspectable>
 
-        {/* ── the agent: the concierge, greeting at the door ──── */}
+        {/* ── the agent: the concierge ────────────────────────── */}
         <group position={[1.15, floorY, 2.45]}>
-          <group rotation={[0, 2.5, 0]}>
-            <Figure
-              look={{ coat: C.roseDeep, skin: "#8C5F42", hair: "#211811", cut: 2 }}
-              scale={1.12}
-              carrying="tablet"
-            />
-          </group>
+          <Concierge animate={animate} />
           <StatusBeacon color={statusColor} y={0.62} animate={animate} />
           <AgentHit agent="concierge" />
         </group>
       </Selectable>
+    </group>
+  );
+}
+
+/* Interior browse loops. Which of them are occupied is set by traffic. */
+const BROWSE_ROUTES: [number, number][][] = [
+  [
+    [1.2, 2.3],
+    [2.1, 0.2],
+    [-0.9, -0.6],
+    [-2.4, 0.9],
+    [1.2, 2.3],
+  ],
+  [
+    [-2.3, 1.7],
+    [-2.3, -0.9],
+    [0.6, -1.3],
+    [-2.3, 1.7],
+  ],
+  [
+    [2.6, 2.6],
+    [0.4, 2.2],
+    [-1.8, 2.5],
+    [2.6, 2.6],
+  ],
+  [
+    [2.3, -1.5],
+    [-1.4, -1.6],
+    [-2.5, 0.4],
+    [2.3, -1.5],
+  ],
+];
+
+/**
+ * The concierge turns toward the door when question volume is high and
+ * back to the salon when it settles — a readout, not an idle animation.
+ */
+function Concierge({ animate }: { animate: boolean }) {
+  const ref = useRef<Group>(null);
+  useFrame(({ clock }, dt) => {
+    if (!ref.current) return;
+    const s = useStore.getState();
+    const busy = s.metrics.boutique.inquiries > 300;
+    const want = busy ? 1.15 : 2.5;
+    ref.current.rotation.y = damp(ref.current.rotation.y, want, 2.5, Math.min(0.1, dt));
+    if (animate) {
+      // a small conversational shift while handling questions
+      ref.current.position.x = busy ? Math.sin(clock.elapsedTime * 0.9) * 0.05 : 0;
+    }
+  });
+  return (
+    <group ref={ref} rotation={[0, 2.5, 0]}>
+      <Figure
+        look={{ coat: C.roseDeep, skin: "#8C5F42", hair: "#211811", cut: 2 }}
+        scale={1.12}
+        carrying="tablet"
+      />
     </group>
   );
 }

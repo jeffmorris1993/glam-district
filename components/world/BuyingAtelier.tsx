@@ -1,12 +1,17 @@
 "use client";
 
+import { useRef } from "react";
 import { RoundedBox } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
+import type { Group } from "three";
 import { useStore } from "@/lib/store";
 import { C, SITES, STATUS_COLOR } from "./palette";
 import { Fabric, Glass, Lit, Marble, Metal, Stone, Wood } from "./Mats";
 import { Handbag, Workstation } from "./Props";
 import { Figure, StatusBeacon, Walker, lookFor } from "./Figures";
 import { AgentHit, Selectable } from "./Selectable";
+import { Inspectable } from "./Inspectable";
+import { damp } from "@/lib/motion";
 
 const SITE = SITES.atelier;
 const W = 8.4;
@@ -267,7 +272,9 @@ export function BuyingAtelier({ animate }: { animate: boolean }) {
         </group>
 
         {/* ── ground-floor showroom ──────────────────────────── */}
-        <SampleTable position={[0.5, 0.36, 1.6]} />
+        <Inspectable target="samples" size={[2.4, 1.2, 1.4]} position={[0.5, 0.36, 1.6]}>
+          <SampleTable position={[0, 0, 0]} />
+        </Inspectable>
         <DisplayPedestal position={[-2.6, 0.36, 1.9]} color={C.champagne} h={0.7} />
         <DisplayPedestal position={[-2.6, 0.36, 0.5]} color={C.rose} h={0.55} />
         <DisplayPedestal position={[2.9, 0.36, 2.1]} color={C.porcelain} h={0.64} />
@@ -297,8 +304,10 @@ export function BuyingAtelier({ animate }: { animate: boolean }) {
         <group position={[0, mezzY + 0.07, 0]}>
           <Workstation position={[-1.3, 0, -2.3]} rotation={Math.PI} />
           <Workstation position={[0.9, 0, -2.3]} rotation={Math.PI} />
-          <MoodBoard position={[-2.3, 0.95, -D / 2 + 0.25]} />
-          <MoodBoard position={[1.8, 0.95, -D / 2 + 0.25]} />
+          <Inspectable target="trendwall" size={[5.4, 1.4, 0.8]} position={[-0.25, 0.45, -D / 2 + 0.3]}>
+            <MoodBoard position={[-2.05, 0.5, 0]} />
+            <MoodBoard position={[2.05, 0.5, 0]} />
+          </Inspectable>
           {/* a rail of samples */}
           <mesh position={[2.9, 1.1, -1.9]} rotation={[0, 0, Math.PI / 2]}>
             <cylinderGeometry args={[0.02, 0.02, 1.7, 8]} />
@@ -371,18 +380,46 @@ export function BuyingAtelier({ animate }: { animate: boolean }) {
         </group>
 
         {/* ── the agent: studying the trend wall on the mezzanine ── */}
-        <group position={[-0.25, mezzY + 0.07, -1.55]}>
-          <group rotation={[0, 0.2, 0]}>
-            <Figure
-              look={{ coat: C.sageDeep, skin: "#C79B76", hair: "#2B1B13", cut: 2 }}
-              scale={1.12}
-              carrying="tablet"
-            />
+        <group position={[0, mezzY + 0.07, 0]}>
+          <Strategist animate={animate} />
+          <group position={[-0.25, 0, -1.55]}>
+            <StatusBeacon color={statusColor} y={0.64} animate={animate} />
+            <AgentHit agent="strategist" />
           </group>
-          <StatusBeacon color={statusColor} y={0.64} animate={animate} />
-          <AgentHit agent="strategist" />
         </group>
       </Selectable>
+    </group>
+  );
+}
+
+/**
+ * The Inventory Strategist stands at the desk during a routine review and
+ * moves to the trend wall when a style crosses into risk. Its position is
+ * a readout of the inventory status, not an idle animation.
+ */
+function Strategist({ animate }: { animate: boolean }) {
+  const ref = useRef<Group>(null);
+  useFrame(({ clock }, dt) => {
+    if (!ref.current) return;
+    const inv = useStore.getState().metrics.inventory;
+    const alarmed = inv.critical.length > 0;
+    const k = Math.min(0.1, dt);
+    // desk when clean, trend wall when something is at risk
+    const target: [number, number] = alarmed ? [-2.05, -2.5] : [-0.25, -1.55];
+    ref.current.position.x = damp(ref.current.position.x, target[0], 1.6, k);
+    ref.current.position.z = damp(ref.current.position.z, target[1], 1.6, k);
+    ref.current.rotation.y = damp(ref.current.rotation.y, alarmed ? Math.PI : 0.2, 2, k);
+    if (animate) {
+      ref.current.position.y = Math.sin(clock.elapsedTime * 1.1) * 0.004;
+    }
+  });
+  return (
+    <group ref={ref} position={[-0.25, 0, -1.55]}>
+      <Figure
+        look={{ coat: C.sageDeep, skin: "#C79B76", hair: "#2B1B13", cut: 2 }}
+        scale={1.12}
+        carrying="tablet"
+      />
     </group>
   );
 }

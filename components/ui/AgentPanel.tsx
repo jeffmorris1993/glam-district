@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AGENTS, briefFor } from "@/lib/agents";
 import { respond } from "@/lib/answers";
 import { DEMO_ORDERS, byId } from "@/lib/catalog";
-import { useSim, useStore, type ChatMessage } from "@/lib/store";
+import { currentLive, currentSim, useSim, useStore, type ChatMessage } from "@/lib/store";
 import { money } from "@/lib/fmt";
 import { usePrefersReducedMotion } from "@/lib/motion";
 import type { AgentStatus, WorldStatus } from "@/lib/types";
@@ -58,21 +58,19 @@ export function AgentPanel() {
     const target = useStore.getState().openAgent;
     if (!target || !q.trim() || thinking) return;
     push(target, { id: nextId(), role: "user", text: q.trim() });
+    useStore.getState().noteAgentQuery(target, q.trim());
     setThinking(true);
     push(target, { id: nextId(), role: "agent", text: "", pending: true });
 
     const delay = reduced ? 120 : 520 + Math.min(900, q.length * 11);
     window.setTimeout(() => {
-      const s = useStore.getState();
-      const reply = respond(target, q, s.metrics, {
-        scenario: s.scenario,
-        viralStage: s.viralStage,
-        demandMultiplier: s.demandMultiplier,
-        coverDays: s.coverDays,
-        staffing: s.staffing,
-        leadTimeAdj: s.leadTimeAdj,
-        staged: s.staged,
-      });
+      const reply = respond(
+        target,
+        q,
+        useStore.getState().metrics,
+        currentSim(),
+        currentLive(),
+      );
       replace(target, {
         id: nextId(),
         role: "agent",

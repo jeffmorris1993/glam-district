@@ -152,35 +152,93 @@ export function Planter({
   );
 }
 
-/* ── Delivery van: loops the boulevard and reverses into a bay ──── */
+/* ── Vehicles ────────────────────────────────────────────────────
+   Nothing here drives on a timer. A van only moves because the clock
+   emitted a dispatch or a receiving event, and it follows a real route
+   with its nose pointed where it is going.
+   ───────────────────────────────────────────────────────────────── */
 
-export function DeliveryVan({
-  animate,
-  speed = 1,
-  phase = 0,
+export type Route = [number, number][];
+
+/** Total length of a polyline route. */
+export function routeLength(route: Route) {
+  let L = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    L += Math.hypot(route[i + 1][0] - route[i][0], route[i + 1][1] - route[i][1]);
+  }
+  return L;
+}
+
+export function RoutedVan({
+  route,
+  speed = 3.4,
   color = C.porcelain,
+  y = 0.185,
+  /** seconds to stand still once the route is finished, before onDone */
+  hold = 0,
+  animate = true,
+  onDone,
 }: {
-  animate: boolean;
+  route: Route;
   speed?: number;
-  phase?: number;
   color?: string;
+  y?: number;
+  hold?: number;
+  animate?: boolean;
+  onDone?: () => void;
 }) {
   const ref = useRef<Group>(null);
-  const t0 = useRef(phase);
+  const travelled = useRef(0);
+  const held = useRef(0);
+  const done = useRef(false);
+
+  const segs = useMemo(() => {
+    const out: { a: [number, number]; b: [number, number]; len: number; acc: number }[] = [];
+    let acc = 0;
+    for (let i = 0; i < route.length - 1; i++) {
+      const len = Math.hypot(route[i + 1][0] - route[i][0], route[i + 1][1] - route[i][1]);
+      out.push({ a: route[i], b: route[i + 1], len, acc });
+      acc += len;
+    }
+    return out;
+  }, [route]);
+  const total = useMemo(() => routeLength(route), [route]);
 
   useFrame((_, dt) => {
-    if (!ref.current) return;
-    if (animate) t0.current += dt * speed * 0.055;
-    const t = t0.current % 1;
-    // Path: east-bound along the boulevard, then loop back west on the far lane.
-    if (t < 0.5) {
-      const p = t / 0.5;
-      ref.current.position.set(-19 + p * 38, 0.185, 10.5);
-      ref.current.rotation.y = Math.PI / 2;
-    } else {
-      const p = (t - 0.5) / 0.5;
-      ref.current.position.set(19 - p * 38, 0.185, 8.7);
-      ref.current.rotation.y = -Math.PI / 2;
+    const g = ref.current;
+    if (!g) return;
+    const step = Math.min(0.05, dt);
+    if (animate && travelled.current < total) travelled.current += step * speed;
+
+    const dist = Math.min(travelled.current, total);
+    let seg = segs[segs.length - 1];
+    for (const sgm of segs) {
+      if (dist <= sgm.acc + sgm.len) {
+        seg = sgm;
+        break;
+      }
+    }
+    if (!seg) return;
+    const local = seg.len === 0 ? 1 : (dist - seg.acc) / seg.len;
+    g.position.set(
+      seg.a[0] + (seg.b[0] - seg.a[0]) * local,
+      y,
+      seg.a[1] + (seg.b[1] - seg.a[1]) * local,
+    );
+
+    // The van body is modelled nose-first along +X.
+    const want = -Math.atan2(seg.b[1] - seg.a[1], seg.b[0] - seg.a[0]);
+    let d = want - g.rotation.y;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    g.rotation.y += d * Math.min(1, step * 5);
+
+    if (travelled.current >= total && !done.current) {
+      held.current += step;
+      if (held.current >= hold) {
+        done.current = true;
+        onDone?.();
+      }
     }
   });
 
