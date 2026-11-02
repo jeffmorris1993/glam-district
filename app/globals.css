@@ -1,26 +1,226 @@
 @import "tailwindcss";
 
+/* ───────────────────────────────────────────────────────────────
+   GLAM DISTRICT — design tokens
+   Quiet luxury: porcelain, blush, champagne, espresso, sage.
+   ─────────────────────────────────────────────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ivory:        #F7F2EC;
+  --porcelain:    #FDFBF8;
+  --linen:        #EFE7DD;
+  --stone:        #DED3C6;
+  --taupe:        #B9A994;
+  --blush:        #E9D3CD;
+  --rose:         #C98E88;
+  --rose-deep:    #A96C68;
+  --champagne:    #D9BC8C;
+  --gold:         #B8914F;
+  --gold-soft:    #E3CDA2;
+  --espresso:     #3A2B23;
+  --charcoal:     #231E1B;
+  --ink:          #16110F;
+  --sage:         #8E9C85;
+  --sage-deep:    #6B7A63;
+  --amber:        #C9893F;
+  --alert:        #B4553F;
+
+  --surface:        rgba(253, 251, 248, 0.86);
+  --surface-solid:  #FBF7F2;
+  --surface-sunk:   #F2EAE0;
+  --hairline:       rgba(58, 43, 35, 0.12);
+  --hairline-soft:  rgba(58, 43, 35, 0.07);
+
+  --shadow-panel: 0 1px 2px rgba(35,30,27,.04), 0 8px 24px rgba(35,30,27,.07),
+                  0 32px 64px -24px rgba(35,30,27,.22);
+  --shadow-card:  0 1px 1px rgba(35,30,27,.03), 0 4px 14px rgba(35,30,27,.055);
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-ivory: var(--ivory);
+  --color-porcelain: var(--porcelain);
+  --color-linen: var(--linen);
+  --color-stone: var(--stone);
+  --color-taupe: var(--taupe);
+  --color-blush: var(--blush);
+  --color-rose: var(--rose);
+  --color-rose-deep: var(--rose-deep);
+  --color-champagne: var(--champagne);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-espresso: var(--espresso);
+  --color-charcoal: var(--charcoal);
+  --color-ink: var(--ink);
+  --color-sage: var(--sage);
+  --color-sage-deep: var(--sage-deep);
+  --color-amber: var(--amber);
+  --color-alert: var(--alert);
+  --color-hairline: var(--hairline);
+  --color-surface: var(--surface-solid);
+  --color-sunk: var(--surface-sunk);
+
+  --font-display: var(--font-bodoni), "Didot", Georgia, serif;
+  --font-sans: var(--font-jost), ui-sans-serif, system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* { -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%;
+  background: var(--ivory);
+  color: var(--espresso);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
+  overscroll-behavior: none;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection { background: var(--gold-soft); color: var(--ink); }
+
+/* ── Type utilities ───────────────────────────────────────────── */
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 0.98;
+}
+.display-it { font-style: italic; }
+
+.eyebrow {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.label {
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* ── Structural bits ──────────────────────────────────────────── */
+
+.hairline { border-color: var(--hairline); }
+
+.panel {
+  background: linear-gradient(174deg, rgba(255,253,250,.97), rgba(247,242,236,.94));
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid var(--hairline-soft);
+  box-shadow: var(--shadow-panel);
+}
+
+.card {
+  background: var(--porcelain);
+  border: 1px solid var(--hairline-soft);
+  box-shadow: var(--shadow-card);
+}
+
+.goldline {
+  background: linear-gradient(90deg, transparent, var(--champagne) 18%, var(--gold) 50%, var(--champagne) 82%, transparent);
+}
+
+.grain::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E");
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────── */
+
+.scroll-fine { scrollbar-width: thin; scrollbar-color: var(--stone) transparent; }
+.scroll-fine::-webkit-scrollbar { width: 7px; height: 7px; }
+.scroll-fine::-webkit-scrollbar-track { background: transparent; }
+.scroll-fine::-webkit-scrollbar-thumb {
+  background: var(--stone); border-radius: 99px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+.scroll-fine::-webkit-scrollbar-thumb:hover { background: var(--taupe); background-clip: content-box; }
+
+/* ── Range input (operational controls) ───────────────────────── */
+
+input[type="range"].lux {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 22px; background: transparent; cursor: ew-resize;
+}
+input[type="range"].lux::-webkit-slider-runnable-track {
+  height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--gold) var(--pct, 50%), var(--stone) var(--pct, 50%));
+}
+input[type="range"].lux::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; margin-top: -6px; border-radius: 50%;
+  background: linear-gradient(160deg, #FFF8EC, var(--champagne) 55%, var(--gold));
+  border: 1px solid rgba(58,43,35,.2);
+  box-shadow: 0 1px 3px rgba(35,30,27,.25), inset 0 1px 0 rgba(255,255,255,.7);
+  transition: transform .18s var(--ease), box-shadow .18s var(--ease);
+}
+input[type="range"].lux:hover::-webkit-slider-thumb { transform: scale(1.14); }
+input[type="range"].lux:active::-webkit-slider-thumb { transform: scale(1.04); }
+input[type="range"].lux:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(184,145,79,.26), 0 1px 3px rgba(35,30,27,.25);
+}
+input[type="range"].lux::-moz-range-track {
+  height: 2px; border-radius: 2px; background: var(--stone);
+}
+input[type="range"].lux::-moz-range-progress { height: 2px; border-radius: 2px; background: var(--gold); }
+input[type="range"].lux::-moz-range-thumb {
+  width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(58,43,35,.2);
+  background: var(--champagne);
+}
+
+/* ── Focus ────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 1.5px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── Motion ───────────────────────────────────────────────────── */
+
+@keyframes fadeUp { from { opacity:0; transform: translate3d(0,10px,0) } to { opacity:1; transform:none } }
+@keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+@keyframes sweep { 0% { transform: translateX(-120%) } 100% { transform: translateX(320%) } }
+@keyframes breathe { 0%,100% { opacity:.55; transform:scale(1) } 50% { opacity:1; transform:scale(1.09) } }
+@keyframes drawline { from { stroke-dashoffset: var(--len, 600) } to { stroke-dashoffset: 0 } }
+@keyframes riseBar { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
+
+.a-fadeUp { animation: fadeUp .7s var(--ease) both; }
+.a-fadeIn { animation: fadeIn .5s var(--ease-soft) both; }
+.a-breathe { animation: breathe 2.8s ease-in-out infinite; }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--linen) 25%, var(--porcelain) 37%, var(--linen) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Panel entry direction: sheets on narrow screens, rails on wide ── */
+@media (min-width: 640px) {
+  :root { --ws-closed: translateX(103%); --ap-closed: translateX(104%); }
 }
