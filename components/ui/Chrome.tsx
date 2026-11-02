@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useStore } from "@/lib/store";
+import { useStore, type Mode } from "@/lib/store";
 import { SITES } from "@/components/world/palette";
 import { KIND_LABEL } from "@/lib/engine";
+import { SCENARIO_LABEL } from "@/lib/presets";
 import type { BuildingId, WorldStatus } from "@/lib/types";
 import { Btn, GoldRule, TONE } from "./bits";
 
@@ -49,6 +50,45 @@ export function DemoBadge({ compact }: { compact?: boolean }) {
       <span className="eyebrow text-[8.5px] text-[var(--espresso)]">
         {compact ? "Demo — Simulated" : "Concept Demo — Simulated Data"}
       </span>
+    </div>
+  );
+}
+
+/* ── Mode switcher ────────────────────────────────────────────────── */
+
+const MODES: { id: Mode; label: string }[] = [
+  { id: "observe", label: "Observe" },
+  { id: "interact", label: "Interact" },
+  { id: "present", label: "Present" },
+];
+
+export function ModeSwitcher() {
+  const mode = useStore((s) => s.mode);
+  const setMode = useStore((s) => s.setMode);
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-full border border-[rgba(58,43,35,.1)] bg-[rgba(253,251,248,.72)] p-[3px] backdrop-blur-xl"
+      role="group"
+      aria-label="Experience mode"
+    >
+      {MODES.map((m) => {
+        const active = mode === m.id;
+        return (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setMode(m.id)}
+            aria-pressed={active}
+            className="label rounded-full px-2.5 py-[5px] text-[8.5px] transition-colors duration-300"
+            style={{
+              background: active ? "var(--espresso)" : "transparent",
+              color: active ? "#FBF7F2" : "#8C7B66",
+            }}
+          >
+            {m.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -115,11 +155,14 @@ export function TopBar() {
           })}
         </div>
 
-        <div
-          className="pointer-events-auto flex items-center gap-2.5 transition-opacity duration-500"
-          style={{ opacity: phase === "building" ? 0 : 1 }}
-        >
-          <DemoBadge compact />
+        <div className="pointer-events-auto flex items-center gap-2.5">
+          <ModeSwitcher />
+          <div
+            className="hidden transition-opacity duration-500 lg:block"
+            style={{ opacity: phase === "building" ? 0 : 1 }}
+          >
+            <DemoBadge compact />
+          </div>
         </div>
       </div>
 
@@ -197,6 +240,19 @@ export function ScenarioBar() {
                 }}
               />
             </button>
+          ) : scenario !== "viral" ? (
+            <>
+              <div className="flex items-center gap-2.5 rounded-full bg-[rgba(58,43,35,.05)] px-4 py-[9px]">
+                <span className="h-[6px] w-[6px] rounded-full bg-[var(--amber)] a-breathe" />
+                <span className="eyebrow text-[8.5px] text-[#8C7B66]">
+                  {SCENARIO_LABEL[scenario]} running
+                </span>
+              </div>
+              <span className="mx-1 h-5 w-px bg-[rgba(58,43,35,.12)]" />
+              <Btn variant="quiet" onClick={reset} size="sm" className="mr-1">
+                Reset Simulation
+              </Btn>
+            </>
           ) : (
             <>
               <div className="flex items-center gap-3.5 rounded-full bg-[rgba(58,43,35,.05)] px-4 py-[9px]">

@@ -1,33 +1,32 @@
 "use client";
 
 import { useMemo } from "react";
-import { currentLive, useSim, useStore } from "@/lib/store";
-import { ASSUMPTIONS, derive } from "@/lib/sim";
+import { useStore } from "@/lib/store";
+import { ASSUMPTIONS } from "@/lib/sim";
 import { PARCEL_UNITS, TRUCK_LOAD, clockLabel } from "@/lib/engine";
 import { compactMoney, days, money, n, pct } from "@/lib/fmt";
 import { byId } from "@/lib/catalog";
-import { BarChart, Btn, Meter, Rule, Slider, Stat, StatusPill, Swatch, Toggle, TONE } from "../bits";
+import type { PriorityPolicy } from "@/lib/types";
+import { BarChart, Btn, Meter, Rule, Stat, StatusPill, Swatch, TONE } from "../bits";
 import { Section, SubHead } from "./shell";
+
+const POLICY_LABEL: Record<PriorityPolicy, string> = {
+  "promise-first": "Promise first",
+  "value-first": "Value first",
+  "express-first": "Express first",
+};
 
 export function FulfillmentPanel() {
   const m = useStore((s) => s.metrics.fulfillment);
   const staffing = useStore((s) => s.staffing);
-  const setStaffing = useStore((s) => s.setStaffing);
+  const priorityPolicy = useStore((s) => s.priorityPolicy);
   const openAgentPanel = useStore((s) => s.openAgentPanel);
-  const sim = useSim();
-
-  /** The plan as it stood before the user touched the controls. */
-  const baseline = useMemo(
-    () =>
-      derive(
-        { ...sim, staffing: { pickers: 14, shiftHours: 8, unitsPerLaborHour: 14, secondShift: false } },
-        currentLive(),
-      ).fulfillment,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sim.scenario, sim.viralStage, sim.demandMultiplier],
+  const openLab = useStore((s) => s.openLab);
+  const revertPlan = useStore((s) => s.revertPlan);
+  const applied = useStore((s) => s.appliedPlans[0] ?? null);
+  const backlogKey = useStore((s) =>
+    s.situations.some((x) => x.key === "fulfillment.backlog") ? "fulfillment.backlog" : undefined,
   );
-  const dirty =
-    staffing.pickers !== 14 || staffing.shiftHours !== 8 || staffing.unitsPerLaborHour !== 14 || staffing.secondShift;
 
   const queue = useMemo(() => m.queue.slice(0, 40), [m.queue]);
   const riskTone = m.status;
@@ -101,87 +100,42 @@ export function FulfillmentPanel() {
 
       <Rule />
 
-      {/* ── controls ───────────────────────────────────────────── */}
+      {/* ── the active plan (decisions happen in the Scenario Lab) ── */}
       <Section>
         <SubHead
-          title="Staffing & productivity"
-          note="Change the plan — the queue, the risk and the cost all re-compute."
+          title="Active plan"
+          note="The plan the floor is running. Explore alternatives — and apply one — in the Scenario Lab."
           right={
-            dirty ? (
-              <Btn
-                size="sm"
-                variant="quiet"
-                onClick={() => setStaffing({ pickers: 14, shiftHours: 8, unitsPerLaborHour: 14, secondShift: false })}
-              >
-                Reset plan
+            applied ? (
+              <Btn size="sm" variant="quiet" onClick={revertPlan} title={`Revert ${applied.label}`}>
+                ↩ Revert
               </Btn>
             ) : undefined
           }
         />
 
-        <div className="mt-4 grid gap-4">
-          <Slider
-            label="Pick & pack associates"
-            value={staffing.pickers}
-            min={6}
-            max={48}
-            onChange={(v) => setStaffing({ pickers: v })}
-            format={(v) => `${v}`}
-            hint={
-              dirty && staffing.pickers !== 14
-                ? `${staffing.pickers > 14 ? "+" : ""}${staffing.pickers - 14} vs. the standing roster of 14`
-                : "Standing roster"
-            }
-          />
-          <Slider
-            label="Shift length"
-            value={staffing.shiftHours}
-            min={6}
-            max={12}
-            onChange={(v) => setStaffing({ shiftHours: v })}
-            format={(v) => `${v} hrs`}
-          />
-          <Slider
-            label="Units per labour hour"
-            value={staffing.unitsPerLaborHour}
-            min={9}
-            max={22}
-            onChange={(v) => setStaffing({ unitsPerLaborHour: v })}
-            format={(v) => `${v}`}
-            hint="Pick rate assumption for the simulated floor"
-          />
-          <Toggle
-            label="Open a second shift"
-            checked={staffing.secondShift}
-            onChange={(v) => setStaffing({ secondShift: v })}
-            hint="Doubles hours at a 8% productivity penalty"
-          />
+        <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3.5">
+          <Stat label="Associates" value={n(staffing.pickers)} note={staffing.secondShift ? "two shifts" : "single shift"} size="sm" />
+          <Stat label="Shift" value={`${staffing.shiftHours} hrs`} note={`${staffing.unitsPerLaborHour} u/labour-hr`} size="sm" />
+          <Stat label="Queue policy" value={POLICY_LABEL[priorityPolicy]} size="sm" />
+          <Stat label="Capacity" value={`${n(m.capacityUnits)}/day`} note="units" size="sm" />
         </div>
 
-        {/* live delta against the standing plan */}
-        <div
-          className="mt-4 overflow-hidden rounded-[2px] border transition-all duration-500"
-          style={{
-            borderColor: dirty ? "rgba(184,145,79,.4)" : "rgba(58,43,35,.08)",
-            background: dirty ? "rgba(217,188,140,.1)" : "transparent",
-            maxHeight: dirty ? 160 : 58,
-          }}
-        >
-          <div className="grid grid-cols-3 gap-3 px-3.5 py-3">
-            <Stat label="Capacity" value={`${n(m.capacityUnits)}`} note="units/day" size="sm" />
-            <Stat label="Labour / day" value={money(m.laborCostDay)} size="sm" />
-            <Stat label="Cost / order" value={money(m.costPerOrder, 2)} note="target $4.60" size="sm" />
+        {applied && (
+          <div className="mt-4 rounded-[2px] border border-[rgba(184,145,79,.3)] bg-[rgba(217,188,140,.1)] px-3.5 py-2.5">
+            <div className="label text-[8.5px] text-[#9A6523]">Your decision · {clockLabel(applied.minute).label}</div>
+            <div className="mt-1 text-[12px] font-medium text-[var(--espresso)]">{applied.label}</div>
+            <div className="num mt-0.5 text-[10.5px] text-[#8C7B66]">{applied.deltas}</div>
           </div>
-          {dirty && (
-            <div className="border-t border-[rgba(184,145,79,.25)] px-3.5 py-2.5 text-[11.5px] leading-relaxed text-[#6E5C4D]">
-              Against the standing roster this plan moves at-risk orders from{" "}
-              <span className="num font-medium text-[var(--espresso)]">{n(baseline.atRisk)}</span> to{" "}
-              <span className="num font-medium text-[var(--espresso)]">{n(m.atRisk)}</span> and the backlog from{" "}
-              <span className="num">{days(baseline.backlogDays)}</span> to{" "}
-              <span className="num">{days(m.backlogDays)}</span>.
-            </div>
-          )}
-        </div>
+        )}
+
+        <Btn variant="primary" className="mt-4" onClick={() => openLab("fulfillment", backlogKey)}>
+          Open in Scenario Lab
+        </Btn>
+        <p className="mt-2 text-[10.5px] leading-relaxed text-[#9C8B76]">
+          Sliders live in the Lab now — explore drafts freely; nothing changes here until you
+          apply a plan.
+        </p>
       </Section>
 
       <Rule />

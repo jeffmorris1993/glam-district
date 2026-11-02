@@ -62,12 +62,31 @@ export function CameraRig({ reduced, compact }: { reduced: boolean; compact: boo
     }
 
     const site = s.focus ? SITES[s.focus] : null;
-    const wantTarget =
+    let wantTarget =
       view === "building" && site
         ? site.target
         : view === "arrival"
           ? ARRIVAL_VIEW.target
           : DISTRICT_VIEW.target;
+
+    // Observe mode: when something notable just happened, lean the frame
+    // toward that building for a few seconds — a glance, not a cut. Skipped
+    // under reduced motion; the wall's text still names the place.
+    const observing = s.mode === "observe" && view === "district";
+    const att =
+      observing && !reduced && s.attention && Date.now() < s.attention.until
+        ? s.attention
+        : null;
+    if (att) {
+      const t = SITES[att.building].target;
+      const d = DISTRICT_VIEW.target;
+      wantTarget = [
+        d[0] + (t[0] - d[0]) * 0.55,
+        d[1] + (t[1] - d[1]) * 0.55,
+        d[2] + (t[2] - d[2]) * 0.55,
+      ];
+      wantZoom *= 1.22;
+    }
 
     const wantPan = compact ? 0 : panelPx / 2 / Math.max(1, zoom.current);
     // Vertical screen-space offset: on arrival the model sits low so the
@@ -90,10 +109,12 @@ export function CameraRig({ reduced, compact }: { reduced: boolean; compact: boo
     target.current.y = damp(target.current.y, wantTarget[1], lambda, k);
     target.current.z = damp(target.current.z, wantTarget[2], lambda, k);
 
-    // A barely-there drift on the arrival screen so the model feels alive.
-    if (!reduced && view === "arrival") drift.current += dt;
-    const dx = view === "arrival" && !reduced ? Math.sin(drift.current * 0.17) * 0.5 : 0;
-    const dz = view === "arrival" && !reduced ? Math.cos(drift.current * 0.13) * 0.3 : 0;
+    // A barely-there drift on the arrival screen and the Observe wall so the
+    // model feels alive on an unattended display.
+    const drifting = !reduced && (view === "arrival" || observing);
+    if (drifting) drift.current += dt;
+    const dx = drifting ? Math.sin(drift.current * 0.17) * 0.5 : 0;
+    const dz = drifting ? Math.cos(drift.current * 0.13) * 0.3 : 0;
 
     right.current.setFromMatrixColumn(cam.matrix, 0).setY(0).normalize();
     up.current.setFromMatrixColumn(cam.matrix, 1).normalize();

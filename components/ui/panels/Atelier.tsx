@@ -4,7 +4,7 @@ import { useStore } from "@/lib/store";
 import { ASSUMPTIONS } from "@/lib/sim";
 import { compactMoney, money, n, pct } from "@/lib/fmt";
 import type { ProductMetrics } from "@/lib/types";
-import { Btn, Meter, RankedBars, Rule, Slider, Spark, Stat, StatusPill, Swatch } from "../bits";
+import { Btn, Meter, RankedBars, Rule, Spark, Stat, StatusPill, Swatch } from "../bits";
 import { Section, SubHead } from "./shell";
 
 function riskTone(r: ProductMetrics["risk"]) {
@@ -13,7 +13,10 @@ function riskTone(r: ProductMetrics["risk"]) {
 
 function ProductRow({ i }: { i: ProductMetrics }) {
   const staged = useStore((s) => s.staged[i.product.id] ?? 0);
-  const stage = useStore((s) => s.stageReorder);
+  const openLab = useStore((s) => s.openLab);
+  const hasSituation = useStore((s) =>
+    s.situations.some((x) => x.key === `inventory.stockout:${i.product.id}`),
+  );
   const tone = riskTone(i.risk);
   const coverPct = Math.min(1, i.stockoutInDays / (i.leadTime + 21));
 
@@ -59,23 +62,34 @@ function ProductRow({ i }: { i: ProductMetrics }) {
             <Spark values={i.trend} tone={tone} width={64} height={24} />
           </div>
 
-          {i.suggestedReorder > 0 && (
+          {staged > 0 ? (
+            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[2px] bg-[rgba(142,156,133,.14)] px-2.5 py-2">
+              <div className="min-w-0">
+                <div className="label text-[8.5px] text-[#5C6B54]">On order — applied plan</div>
+                <div className="num mt-[1px] text-[12px] text-[var(--espresso)]">
+                  {n(staged)} units · {compactMoney(staged * i.product.cost)} · arriving
+                </div>
+              </div>
+            </div>
+          ) : i.suggestedReorder > 0 ? (
             <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[2px] bg-[rgba(217,188,140,.14)] px-2.5 py-2">
               <div className="min-w-0">
-                <div className="label text-[8.5px] text-[#9A6523]">Suggested reorder</div>
+                <div className="label text-[8.5px] text-[#9A6523]">Reorder window open</div>
                 <div className="num mt-[1px] text-[12px] text-[var(--espresso)]">
-                  {n(i.suggestedReorder)} units · {compactMoney(i.suggestedReorder * i.product.cost)}
+                  suggestion: {n(i.suggestedReorder)} units · {compactMoney(i.suggestedReorder * i.product.cost)}
                 </div>
               </div>
               <Btn
                 size="sm"
-                variant={staged ? "quiet" : "ghost"}
-                onClick={() => stage(i.product.id, staged ? 0 : i.suggestedReorder)}
+                variant="ghost"
+                onClick={() =>
+                  openLab("atelier", hasSituation ? `inventory.stockout:${i.product.id}` : undefined)
+                }
               >
-                {staged ? "Staged ✓" : "Stage"}
+                Compare options
               </Btn>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -87,11 +101,11 @@ export function AtelierPanel() {
   const demand = useStore((s) => s.demandMultiplier);
   const cover = useStore((s) => s.coverDays);
   const leadAdj = useStore((s) => s.leadTimeAdj);
-  const setDemand = useStore((s) => s.setDemand);
-  const setCover = useStore((s) => s.setCover);
-  const setLeadAdj = useStore((s) => s.setLeadAdj);
-  const clearStaged = useStore((s) => s.clearStaged);
   const openAgentPanel = useStore((s) => s.openAgentPanel);
+  const openLab = useStore((s) => s.openLab);
+  const stockoutKey = useStore(
+    (s) => s.situations.find((x) => x.key.startsWith("inventory.stockout:"))?.key,
+  );
 
   const ranked = inv.items.slice().sort((a, b) => a.stockoutInDays - b.stockoutInDays);
   const best = inv.items.slice().sort((a, b) => b.revenue7d - a.revenue7d);
@@ -158,57 +172,26 @@ export function AtelierPanel() {
 
       <Rule />
 
-      {/* ── assumptions ───────────────────────────────────────── */}
+      {/* ── the active plan (assumptions live in the Scenario Lab) ── */}
       <Section>
         <SubHead
           title="Planning assumptions"
-          note="Move these and every cover figure, warning and reorder quantity re-computes."
-          right={
-            demand !== 1 || cover !== 14 || leadAdj !== 0 ? (
-              <Btn
-                size="sm"
-                variant="quiet"
-                onClick={() => {
-                  setDemand(1);
-                  setCover(14);
-                  setLeadAdj(0);
-                }}
-              >
-                Reset
-              </Btn>
-            ) : undefined
-          }
+          note="The assumptions the district currently plans against. Explore alternatives in the Scenario Lab."
         />
-        <div className="mt-4 grid gap-4">
-          <Slider
-            label="Demand forecast"
-            value={demand}
-            min={0.5}
-            max={3}
-            step={0.05}
-            onChange={setDemand}
-            format={(v) => `${v.toFixed(2)}×`}
-            hint={demand === 1 ? "Current run rate" : `${demand > 1 ? "Above" : "Below"} the current run rate`}
-          />
-          <Slider
-            label="Forward cover target"
-            value={cover}
-            min={0}
-            max={45}
-            onChange={setCover}
-            format={(v) => `${v} days`}
-            hint="Buffer held beyond the supplier lead time"
-          />
-          <Slider
-            label="Supplier lead-time shift"
-            value={leadAdj}
-            min={-14}
-            max={28}
-            onChange={setLeadAdj}
-            format={(v) => `${v > 0 ? "+" : ""}${v} days`}
-            hint={leadAdj === 0 ? "Quoted lead times, 26–45 days" : "Applied to every style"}
+        <div className="mt-4 grid grid-cols-3 gap-x-5 gap-y-3.5">
+          <Stat label="Demand" value={`${demand.toFixed(2)}×`} note={demand === 1 ? "run rate" : demand > 1 ? "above run rate" : "below run rate"} size="sm" />
+          <Stat label="Cover target" value={`${cover} days`} note="beyond lead time" size="sm" />
+          <Stat
+            label="Lead times"
+            value={`${leadAdj > 0 ? "+" : ""}${leadAdj}d`}
+            note="supplier shift"
+            tone={leadAdj > 7 ? "watch" : undefined}
+            size="sm"
           />
         </div>
+        <Btn variant="primary" className="mt-4" onClick={() => openLab("atelier", stockoutKey)}>
+          Open in Scenario Lab
+        </Btn>
       </Section>
 
       <Rule />
@@ -236,19 +219,10 @@ export function AtelierPanel() {
           <div className="mt-2">
             <Meter value={Math.min(1, otbUsed)} tone={otbUsed > 1 ? "critical" : otbUsed > 0.8 ? "watch" : "healthy"} height={5} />
           </div>
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[10.5px] text-[#A3927C]">
-              {inv.stagedUnits > 0
-                ? `${n(inv.stagedUnits)} units staged across ${Object.keys(useStore.getState().staged).length} ${
-                    Object.keys(useStore.getState().staged).length === 1 ? "style" : "styles"
-                  }`
-                : "Nothing staged"}
-            </span>
-            {inv.stagedUnits > 0 && (
-              <Btn size="sm" variant="quiet" onClick={clearStaged}>
-                Clear
-              </Btn>
-            )}
+          <div className="mt-2 text-[10.5px] text-[#A3927C]">
+            {inv.stagedUnits > 0
+              ? `${n(inv.stagedUnits)} units on order from applied plans — in transit until the van lands`
+              : "No buys in flight. Reorder decisions are made in the Scenario Lab."}
           </div>
         </div>
       </Section>

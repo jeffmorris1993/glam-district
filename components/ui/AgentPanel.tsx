@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AGENTS, briefFor } from "@/lib/agents";
+import { optionsFor, type NewScenario, type Situation } from "@/lib/scenarios";
+import type { LabOps } from "@/lib/answers";
 import { respond } from "@/lib/answers";
 import { DEMO_ORDERS, byId } from "@/lib/catalog";
 import { currentLive, currentSim, useSim, useStore, type ChatMessage } from "@/lib/store";
@@ -22,6 +24,44 @@ const STATUS_TONE: Record<AgentStatus, WorldStatus> = {
 let seq = 0;
 const nextId = () => `m${++seq}`;
 
+/** Carry a reply's deterministic Scenario Lab operations into the store. */
+function dispatchLabOps(agent: "analyst" | "strategist" | "concierge", ops: LabOps) {
+  const st = useStore.getState();
+  const building = AGENTS[agent].building;
+  const sitKey = st.situations.find((x) => x.agent === agent && x.revealed)?.key;
+
+  // Open only when the intent asks for it — a reply should stay readable.
+  // Drafts created while the Lab is closed are kept when it next opens.
+  if (ops.open && !st.lab.open) st.openLab(building, sitKey);
+
+  const createdIds: string[] = [];
+  for (const c of ops.create ?? []) {
+    const sim = currentSim();
+    const id = useStore.getState().createScenario({
+      name: c.name,
+      source: "user",
+      assumptions: {
+        ...sim,
+        ...c.patch,
+        staffing: { ...sim.staffing, ...c.patch.staffing },
+        staged: c.patch.staged ?? { ...sim.staged },
+      },
+      note: c.note,
+    });
+    createdIds.push(id);
+  }
+
+  if (ops.compareNames?.length) {
+    const lab = useStore.getState().lab;
+    const ids = ops.compareNames
+      .map((name) => lab.scenarios.find((sc) => sc.name.toLowerCase() === name.toLowerCase())?.id)
+      .filter((x): x is string => !!x);
+    if (ids.length) useStore.getState().setCompare(ids.slice(0, 3));
+  } else if (createdIds.length) {
+    useStore.getState().setCompare(createdIds.slice(-3));
+  }
+}
+
 export function AgentPanel() {
   const openAgent = useStore((s) => s.openAgent);
   const close = useStore((s) => s.openAgentPanel);
@@ -40,6 +80,18 @@ export function AgentPanel() {
   const agent = id ? AGENTS[id] : null;
   const brief = id ? briefFor(id, metrics, sim) : null;
   const thread = id ? threads[id] : [];
+
+  const situation = useStore(
+    (s) => s.situations.find((x) => x.agent === id && x.revealed) ?? null,
+  );
+  // Options are a handful of derive() passes — refresh hourly, not per tick.
+  const minuteHour = useStore((s) => Math.floor(s.flow.minute / 60));
+  const options = useMemo(
+    () => (situation && id ? optionsFor(situation, metrics, sim, currentLive()) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [situation?.key, id, minuteHour, sim.viralStage, sim.staffing.pickers],
+  );
+  const openLab = useStore((s) => s.openLab);
 
   useEffect(() => {
     if (!scroller.current) return;
@@ -64,13 +116,11 @@ export function AgentPanel() {
 
     const delay = reduced ? 120 : 520 + Math.min(900, q.length * 11);
     window.setTimeout(() => {
-      const reply = respond(
-        target,
-        q,
-        useStore.getState().metrics,
-        currentSim(),
-        currentLive(),
-      );
+      const st = useStore.getState();
+      const reply = respond(target, q, st.metrics, currentSim(), currentLive(), {
+        flow: st.flow,
+        situations: st.situations.filter((x) => x.revealed),
+      });
       replace(target, {
         id: nextId(),
         role: "agent",
@@ -79,6 +129,7 @@ export function AgentPanel() {
         products: reply.products,
         order: reply.order,
       });
+      if (reply.labOps) dispatchLabOps(target, reply.labOps);
       setThinking(false);
     }, delay);
   }
@@ -148,7 +199,17 @@ export function AgentPanel() {
 
             {/* ── scrollable body ──────────────────────────────── */}
             <div ref={scroller} className="scroll-fine min-h-0 flex-1 overflow-y-auto">
-              {thread.length === 0 && <Brief brief={brief} />}
+              {thread.length === 0 && (
+                <Brief
+                  brief={brief}
+                  situation={situation}
+                  options={options}
+                  onExplore={() => {
+                    if (!situation) return;
+                    openLab(agent.building, situation.key);
+                  }}
+                />
+              )}
 
               {thread.length > 0 && (
                 <div className="flex flex-col gap-4 px-5 py-5">
@@ -241,11 +302,98 @@ function Composer({
   );
 }
 
-/* ── The standing brief, shown before a conversation starts ───────── */
+/* ── The standing brief: a decision briefing, not an instruction ──── */
 
-function Brief({ brief }: { brief: ReturnType<typeof briefFor> }) {
+function Brief({
+  brief,
+  situation,
+  options,
+  onExplore,
+}: {
+  brief: ReturnType<typeof briefFor>;
+  situation: (Situation & { revealed: boolean }) | null;
+  options: NewScenario[];
+  onExplore: () => void;
+}) {
   return (
     <div className="px-5 pb-6 pt-1">
+      <Block title="What is happening">
+        <div className="grid gap-2">
+          {brief.happening.map((f, i) => (
+            <p key={i} className="text-[12px] leading-relaxed text-[#5F5043]">
+              {f}
+            </p>
+          ))}
+        </div>
+      </Block>
+
+      <Block title="Why it matters">
+        <p className="text-[12px] leading-relaxed text-[#5F5043]">{brief.whyItMatters}</p>
+      </Block>
+
+      {situation && options.length > 0 && (
+        <Block title={`Your options — ${options.length} ways to respond`}>
+          <div className="grid gap-1.5">
+            {options.map((o) => (
+              <div
+                key={o.name}
+                className="rounded-[2px] border border-[rgba(58,43,35,.08)] bg-[rgba(255,255,255,.5)] px-3 py-2"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11.5px] font-medium text-[var(--espresso)]">
+                    {o.name}
+                    {o.preferredWhy && (
+                      <span className="ml-1 text-[var(--gold)]" title={o.preferredWhy}>◆</span>
+                    )}
+                  </span>
+                  <span
+                    className="label shrink-0 text-[7px]"
+                    style={{ color: o.source === "user" ? "#9A6523" : "#5C6B54" }}
+                  >
+                    {o.source === "user" ? "yours to shape" : "agent draft"}
+                  </span>
+                </div>
+                {o.note && (
+                  <p className="mt-0.5 text-[10.5px] italic leading-snug text-[#8C7B66]">{o.note}</p>
+                )}
+              </div>
+            ))}
+          </div>
+          <Btn variant="primary" size="sm" className="mt-3" onClick={onExplore}>
+            Explore &amp; compare in the Scenario Lab
+          </Btn>
+          <p className="mt-2 text-[10px] leading-relaxed text-[#B5A48E]">
+            No option is ranked best — the projections and trade-offs are laid out for your call.
+          </p>
+        </Block>
+      )}
+
+      <Block title="The trade-offs">
+        <p className="text-[12px] leading-relaxed text-[#5F5043]">{brief.tradeoffs}</p>
+      </Block>
+
+      <Block title="Assumptions that could move the results">
+        <ul className="grid gap-1.5">
+          {brief.assumptions.map((x) => (
+            <li key={x} className="flex gap-2 text-[11.5px] leading-relaxed text-[#6E5C4D]">
+              <span className="mt-[7px] h-[3px] w-[3px] shrink-0 rounded-full bg-[#C4B29A]" />
+              {x}
+            </li>
+          ))}
+        </ul>
+      </Block>
+
+      <Block title="What would sharpen the decision">
+        <ul className="grid gap-1.5">
+          {brief.wouldHelp.map((x) => (
+            <li key={x} className="flex gap-2 text-[11.5px] leading-relaxed text-[#6E5C4D]">
+              <span className="mt-[6px] shrink-0 text-[9px] text-[#C4B29A]">?</span>
+              {x}
+            </li>
+          ))}
+        </ul>
+      </Block>
+
       <Block title="Monitoring">
         <ul className="grid gap-1.5">
           {brief.monitoring.map((x) => (
@@ -255,36 +403,6 @@ function Brief({ brief }: { brief: ReturnType<typeof briefFor> }) {
             </li>
           ))}
         </ul>
-      </Block>
-
-      <Block title="What it found">
-        <div className="grid gap-2">
-          {brief.findings.map((f, i) => (
-            <p key={i} className="text-[12px] leading-relaxed text-[#5F5043]">
-              {f}
-            </p>
-          ))}
-        </div>
-      </Block>
-
-      <Block title="Recommendations">
-        <div className="grid gap-2">
-          {brief.recommendations.map((r) => {
-            const tone: WorldStatus = r.tone === "alert" ? "critical" : r.tone === "watch" ? "watch" : "healthy";
-            return (
-              <div
-                key={r.title}
-                className="rounded-[2px] border px-3 py-2.5"
-                style={{ borderColor: `${TONE[tone].dot}44`, background: TONE[tone].bg }}
-              >
-                <div className="text-[12px] font-medium leading-snug" style={{ color: TONE[tone].fg }}>
-                  {r.title}
-                </div>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-[#6E5C4D]">{r.detail}</p>
-              </div>
-            );
-          })}
-        </div>
       </Block>
 
       <Block title="Supporting data">

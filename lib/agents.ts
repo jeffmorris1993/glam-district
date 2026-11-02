@@ -1,4 +1,4 @@
-import { HERO_ID, byId } from "./catalog";
+import { HERO_ID } from "./catalog";
 import { ASSUMPTIONS, shipWindow } from "./sim";
 import { compactMoney, days, money, n, pct } from "./fmt";
 import type { AgentId, AgentStatus, BuildingId, Metrics, SimState } from "./types";
@@ -59,12 +59,21 @@ export interface DataRef {
   note?: string;
 }
 
+/**
+ * A decision briefing, not an instruction. Answers, in order: what is
+ * happening · why it matters · the trade-off axes · which assumptions could
+ * change the results · what additional information would improve the
+ * decision. Options themselves come from the Scenario Lab (lib/scenarios.ts).
+ */
 export interface Brief {
   status: AgentStatus;
   task: string;
+  happening: string[];
+  whyItMatters: string;
+  tradeoffs: string;
+  assumptions: string[];
+  wouldHelp: string[];
   monitoring: string[];
-  findings: string[];
-  recommendations: { title: string; detail: string; tone: "info" | "watch" | "alert" }[];
   data: DataRef[];
   suggested: string[];
   history: { when: string; text: string; status: AgentStatus }[];
@@ -93,7 +102,7 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
         "Carrier cut-off at 4:00pm",
         "Cost per order against the $4.60 target",
       ],
-      findings: critical
+      happening: critical
         ? [
             `The book stands at ${n(f.openOrders)} orders / ${n(f.openUnits)} units. Today's plan clears ${n(f.capacityUnits)} units.`,
             `That is ${days(f.backlogDays)} of work in the queue — ${n(f.atRisk)} orders (${pct(f.atRisk / Math.max(1, f.openOrders))} of the book, ${compactMoney(f.atRiskValue)}) ship after their promise date.`,
@@ -108,27 +117,24 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
               `Every order in the book is scheduled to ship on or before its promise date.`,
               `Capacity utilisation is ${pct(f.utilization)} — there is headroom for roughly ${n(Math.max(0, f.capacityUnits - Math.round(f.utilization * f.capacityUnits)))} more units a day.`,
             ],
-      recommendations: critical
-        ? [
-            {
-              title: `Add associates until capacity passes ${n(Math.ceil(f.openUnits / 2))} units/day`,
-              detail: `Two days of promise coverage needs about ${n(Math.ceil(f.openUnits / 2))} units a day. Use the staffing control to test it — the queue re-plans live.`,
-              tone: "alert",
-            },
-            {
-              title: "Protect VIP and Express first",
-              detail:
-                "The queue already sorts by promise date, then tier, then order value. VIP orders stay inside day one at every staffing level tested.",
-              tone: "info",
-            },
-          ]
-        : [
-            {
-              title: "Hold the current plan",
-              detail: `${n(f.shippedToday)} orders will ship today at ${money(f.costPerOrder, 2)} each. No intervention needed.`,
-              tone: "info",
-            },
-          ],
+      whyItMatters: critical
+        ? `${compactMoney(f.atRiskValue)} of promised revenue ships late unless the plan changes — or you decide the delay is acceptable. Either way it should be a decision, not a drift.`
+        : f.atRisk > 0
+          ? `A small cohort is close to its promise date; a modest change now is cheaper than an apology later.`
+          : `Nothing requires a decision — this is the picture a healthy floor should show.`,
+      tradeoffs: critical
+        ? `The levers trade against each other: temporary staffing buys on-time delivery with labor dollars; a second shift buys the most throughput at the highest cost; reprioritizing is free but breaks more standard promises; holding course spends customer goodwill instead of cash. Which matters most is your call — open the options to compare them.`
+        : `With the book clean, the standing trade-off is cost per order vs. headroom: a leaner roster is cheaper per day but absorbs surges worse.`,
+      assumptions: [
+        `Pick rate ${s.staffing.unitsPerLaborHour} units/labour-hour — temps typically run below this at first`,
+        `Demand assumption ${s.demandMultiplier.toFixed(2)}× — intake above it grows the queue faster than projected`,
+        `Labor ${money(ASSUMPTIONS.laborRate, 2)}/hr fully loaded`,
+      ],
+      wouldHelp: [
+        "Which customer commitments are hardest — dates or tiers?",
+        "A ceiling for additional daily labor spend",
+        "Whether temps can realistically start within the backlog window",
+      ],
       data: [
         { label: "Open orders", value: n(f.openOrders), note: `${n(f.openUnits)} units` },
         { label: "Daily capacity", value: `${n(f.capacityUnits)} units`, note: `${n(f.capacityPerDay)} orders` },
@@ -138,10 +144,10 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
         { label: "Cost / order", value: money(f.costPerOrder, 2) },
       ],
       suggested: [
-        "Which orders need attention today?",
-        "What happens if I add five workers?",
-        "Can we handle another 2,000 orders?",
-        "Create tomorrow's fulfillment plan.",
+        "Give me the daily briefing.",
+        "What's the cheapest approach?",
+        "Compare a second shift against temporary staffing.",
+        "What if I add only three workers?",
       ],
       history: [
         ...(viral && stage >= 2
@@ -186,7 +192,7 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
         "Supplier lead times and open purchase orders",
         `Open-to-buy: ${compactMoney(inv.openToBuy)} for the next buy`,
       ],
-      findings: alarmed
+      happening: alarmed
         ? [
             `${worst.product.name} is selling at ${n(worst.effVelocity)} units a day against ${n(worst.onHandEff)} on hand — that is ${worst.stockoutInDays.toFixed(1)} days of cover.`,
             `The supplier needs ${worst.leadTime} days, so there is a ${Math.max(0, worst.leadTime - worst.stockoutInDays).toFixed(0)}-day gap with nothing to sell.`,
@@ -201,27 +207,24 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
               `All ${inv.skuCount} styles hold more than ${s.coverDays} days of cover beyond their lead time.`,
               `${compactMoney(inv.retailValue)} of inventory at retail, ${n(inv.unitsOnHand)} units.`,
             ],
-      recommendations: alarmed
-        ? [
-            {
-              title: `Place ${n(worst.suggestedReorder)} units of ${worst.product.name}`,
-              detail: `Sized to ${worst.leadTime} days of lead time plus ${s.coverDays} days of cover at a planning velocity of ${n(worst.planVelocity)}/day — not at today's spike rate. Landed cost ${compactMoney(worst.suggestedReorder * worst.product.cost)}.`,
-              tone: "alert",
-            },
-            {
-              title: "Open a waitlist rather than oversell",
-              detail:
-                "The concierge switches to waitlist language automatically when a style drops below cover. This is a simulated planning scenario, not purchasing advice.",
-              tone: "watch",
-            },
-          ]
-        : [
-            {
-              title: "No buy required this week",
-              detail: `Every style clears its lead time with cover to spare. Revisit when the demand assumption moves past ${(s.demandMultiplier + 0.3).toFixed(1)}×.`,
-              tone: "info",
-            },
-          ],
+      whyItMatters: alarmed
+        ? `Every day below the lead-time line is demand the house cannot serve — roughly ${compactMoney(inv.atRiskRevenue)} exposed at planning velocity. Ordering too much carries the opposite risk: cash tied up in markdown-prone stock.`
+        : inv.watch.length > 0
+          ? `Styles inside the reorder window still have time, but the window only narrows.`
+          : `Cover is comfortable everywhere — a good moment to pressure-test assumptions rather than place orders.`,
+      tradeoffs: alarmed
+        ? `The buy sizes against each other: lean protects cash but risks a second stockout; the suggested quantity restores the cover target; heavy insures against a slow settle at the cost of markdown exposure. Holding course costs no cash and the most goodwill. The right size depends on how you weigh cash against availability — compare them in the Lab.`
+        : `The standing trade-off is cover vs. cash: every extra week of cover is capital sitting in racking.`,
+      assumptions: [
+        `Planning velocity assumes a spike settles to ${ASSUMPTIONS.spikeSettleMultiplier}× baseline — not today's rate`,
+        `Lead times as quoted ${s.leadTimeAdj !== 0 ? `(shifted ${s.leadTimeAdj > 0 ? "+" : ""}${s.leadTimeAdj}d)` : ""} — slippage moves every window`,
+        `Demand assumption ${s.demandMultiplier.toFixed(2)}×`,
+      ],
+      wouldHelp: [
+        "Any supplier flexibility on partial or expedited shipments",
+        "Whether the spike is organic or promo-driven (settles differently)",
+        "A floor for acceptable weeks-of-stock after the buy",
+      ],
       data: [
         { label: "Styles", value: n(inv.skuCount), note: `${n(inv.unitsOnHand)} units on hand` },
         { label: "Retail value", value: compactMoney(inv.retailValue) },
@@ -235,8 +238,8 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
         { label: "Open-to-buy", value: compactMoney(inv.openToBuy), note: `${compactMoney(inv.stagedCost)} staged` },
       ],
       suggested: [
+        "Build me a buying plan.",
         "Which products might sell out next?",
-        "What should I reorder before the next drop?",
         "What happens if demand doubles?",
         "What is the risk of ordering 500 more units?",
       ],
@@ -276,7 +279,7 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
       "Example shipping, returns and restock policies",
       "Three fictional order records for status look-ups",
     ],
-    findings: busy
+    happening: busy
       ? [
           `Question volume is ${ASSUMPTIONS.inquirySpike}× normal at ${n(b.inquiries)} today.`,
           `${low.length} ${low.length === 1 ? "style is" : "styles are"} no longer quoted as in stock: ${low.map((i) => i.product.name).join(", ")}.`,
@@ -291,27 +294,24 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
             `All ${inv.skuCount} styles are quoted as in stock.`,
             `Ship window quoted: ${win.label}. Conversion is tracking ${pct(b.conversion, 2)}.`,
           ],
-    recommendations: busy
-      ? [
-          {
-            title: "Offer the waitlist on the Soleil Mini",
-            detail:
-              "Rather than promising a date, the concierge offers the waitlist and names the replenishment window from the Buying Atelier's simulated lead time.",
-            tone: "watch",
-          },
-          {
-            title: "Lead with the Cassis Quilted for everyday requests",
-            detail: `${byId("cassis-quilted").name} holds cover, sits at ${money(byId("cassis-quilted").price)} and answers the same brief.`,
-            tone: "info",
-          },
-        ]
-      : [
-          {
-            title: "Keep the current answers",
-            detail: `Availability and the ${win.label} ship window both read clean. No language changes needed.`,
-            tone: "info",
-          },
-        ],
+    whyItMatters: busy
+      ? `Each availability question is a client at the moment of decision. The playbook decides whether scarcity reads as disappointment or as a waitlist relationship — and it should match whatever the ops and buying decisions are.`
+      : low.length > 0
+        ? `A few styles are being quoted as low stock; language is doing quiet work.`
+        : `Conversations are routine — the playbook question is dormant.`,
+    tradeoffs: busy
+      ? `Three postures trade against each other: the standard playbook keeps answers reactive; protect-the-promise leads with honest timelines and steers to in-stock styles (softening hero demand by design); waitlist-first captures demand for the restock but asks clients to wait. None is objectively right — it depends how you want scarcity to feel.`
+      : `The standing trade-off is candour vs. conversion: earlier honesty costs a few impulse orders and saves later service load.`,
+    assumptions: [
+      `Availability language derives from live simulated stock and the ${s.coverDays}-day cover target`,
+      `Ship window quoted from the live pick plan — it moves with the queue`,
+      `Question volume scales with sessions and with scarcity`,
+    ],
+    wouldHelp: [
+      "Brand guardrails: how candid may availability language be?",
+      "Whether a restock date can be promised once a reorder is applied",
+      "Which clients merit proactive outreach vs. reactive answers",
+    ],
     data: [
       { label: "Sessions today", value: n(b.sessions) },
       { label: "Orders today", value: n(b.ordersToday), note: pct(b.conversion, 2) },
@@ -321,8 +321,8 @@ export function briefFor(id: AgentId, m: Metrics, s: SimState): Brief {
       { label: "Ship window", value: win.label },
     ],
     suggested: [
+      "How are inquiries trending?",
       "Help me find an everyday bag under $100.",
-      "What's a good gift?",
       "When will the Soleil Mini restock?",
       "Where is my order?",
     ],

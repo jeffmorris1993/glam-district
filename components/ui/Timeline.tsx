@@ -6,6 +6,7 @@ import { SITES } from "@/components/world/palette";
 import { n } from "@/lib/fmt";
 import type { WorldStatus } from "@/lib/types";
 import { TONE } from "./bits";
+import { ActionCenterToggle } from "./ActionCenter";
 
 /* ─────────────────────────────────────────────────────────────────
    THE DISTRICT TIMELINE
@@ -43,6 +44,8 @@ export function TimelineToggle() {
         <span className="num text-[10.5px] text-[var(--espresso)]">{label}</span>
         <span className="label text-[8px] text-[#A3927C]">{inShift ? "Floor open" : "Floor closed"}</span>
       </div>
+
+      <ActionCenterToggle />
 
       <button
         type="button"

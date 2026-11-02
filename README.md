@@ -13,16 +13,69 @@ A concept by **Sirrom Studios** for **Glamaholic Lifestyle**.
 ## What this is
 
 A miniature luxury business district, rendered in real-time 3D, where three AI
-agents run the operations behind a fashion-accessories house. The 3D world **is**
-the interface — buildings are the navigation, agents are the entry points, and the
-operational workspaces layer over the living model rather than navigating away
-from it.
+agents **advise on** the operations behind a fashion-accessories house — and the
+owner decides. The 3D world **is** the interface — buildings are the navigation,
+agents are the entry points, and the operational workspaces layer over the living
+model rather than navigating away from it.
+
+The product philosophy is simple: Glam District makes the business owner **more
+informed and more capable, not less in control**. Agents detect, explain, and lay
+out options with honest trade-offs; every change to the running district is a
+decision the owner makes explicitly.
 
 | Destination | Agent | What it runs |
 | --- | --- | --- |
 | **The Fulfillment House** | Fulfillment Analyst | Open order book, pick capacity, the daily ship plan |
 | **The Buying Atelier** | Inventory Strategist | Stock cover, sell-through, reorder scenarios |
 | **The Glam Boutique** | Glam Concierge | Clients, availability, shipping and order look-ups |
+
+## Three ways to watch it
+
+| Mode | What it is |
+| --- | --- |
+| **Observe** | A TV framing: the live district, three status cards, the latest event, and — when something crosses a threshold — one strip naming the decision that's waiting. The camera drifts, and leans toward wherever something notable just happened. Any click escalates into Interact. |
+| **Interact** | The full experience: enter buildings, inspect objects, question agents, explore and apply plans. |
+| **Present** | Interact plus a presenter bar: four repeatable scenario presets, pause / step / 2× on the clock, manual stage advance for the viral drop, and hold-and-reveal for decision moments. `P` toggles it. |
+
+Modes are also addressable by URL (`?mode=observe`, `?mode=present`).
+
+## The decision loop
+
+**Observe → Investigate → Explore options → Compare → Decide → Apply → Verify.**
+
+1. **Situations** — deterministic threshold rules ([`lib/scenarios.ts`](lib/scenarios.ts))
+   detect when the district needs a decision: a backlog that will miss promises, a
+   style selling through inside its lead time, an inquiry surge. Each lands on the
+   **Decision Desk** with its evidence and why it matters.
+2. **Decision briefings** — each agent answers the owner's seven questions: what is
+   happening, why it matters, what options exist, their projected outcomes, the
+   trade-offs, the assumptions that could move the results, and what additional
+   information would sharpen the decision.
+3. **The Scenario Lab** — every situation opens into multiple reasonable approaches
+   (hold course / add temps / second shift / reprioritize the queue / your own custom
+   plan), each a full draft of assumptions. The sliders live here, fully interactive,
+   recomputing projections on every nudge. **Drafts never touch the live district** —
+   the world keeps running the current plan while you explore.
+4. **Compare** — up to three scenarios side-by-side against the live baseline:
+   capacity, at-risk orders, backlog (with sensitivity ranges), on-time rate, labor
+   cost, cost per order, open-to-buy, exposed revenue, and a narrative customer-impact
+   row. No option is ranked "best" — a ◆ preferred flag appears only under strict
+   dominance, and the agent maps priorities to options instead ("if cost is the
+   constraint… if customer experience is…").
+5. **Apply to Demo** — the only mutation of live state. One atomic commit, one
+   `plan.applied` event, a record on the Decision Desk with frozen before/after
+   deltas — and a **Revert** that restores the previous plan.
+6. **Verify** — applied buys become simulated POs that land days later: a van
+   arrives, stock credits, and the plan's record gains its "goods landed" stamp.
+
+Conversation does the same work: *"What's the cheapest approach?"* ranks the live
+options by labor cost; *"Compare a second shift against temporary staffing"* creates
+both drafts and opens the Lab with them side-by-side; *"What if I add only three
+workers?"* builds a comparable draft from that exact assumption.
+
+**Uncertainty is handled honestly**: every scenario lists its assumptions as data
+chips, key outputs carry pessimistic–optimistic sensitivity ranges, and calculated
+projections are visually tagged apart from agent commentary.
 
 ### The hero moment — *Simulate a Viral Drop*
 
@@ -130,9 +183,12 @@ buy scenario is a plausible plan rather than an extrapolation of one good day.
 ## Agent behaviour
 
 Each agent has an identity, a live status (`Monitoring · Analyzing · Planning ·
-Needs review · Completed`), a current task, what it is monitoring, what it found,
-recommendations, the supporting data, an activity history, suggested questions and
-a chat input.
+Needs review · Completed`), a current task, and a **decision briefing**: what is
+happening, why it matters, the options with their projections, the trade-offs, the
+assumptions in play, what would sharpen the decision, what it is monitoring, the
+supporting data, an activity history, suggested questions and a chat input. Agents
+never apply anything — the boutique's playbooks, like every other change, are
+reviewable proposals the owner applies or declines.
 
 Responses are **scripted intent matching** over the live simulation
 ([`lib/answers.ts`](lib/answers.ts)) — including real what-if computation. Asking
@@ -201,17 +257,22 @@ app/
 lib/
   catalog.ts             fictional products, policies, demo orders, name pools
   sim.ts                 the pure calculation layer — derive(state, live)
-  engine.ts              the district clock: ticks, events, inspector copy
-  store.ts               shared state, the clock driver, viral-drop choreography
-  agents.ts              agent identities and live briefs
-  answers.ts             scripted response engine (with real what-if math)
+  engine.ts              the district clock: ticks, events, POs, inspector copy
+  scenarios.ts           the decision core: situations, option sets, projections,
+                         sensitivity bands, the compare-table model
+  presets.ts             the presenter's four repeatable scenario presets
+  store.ts               shared state, the clock driver, modes, the Scenario Lab
+                         (drafts), apply/revert, viral-drop choreography
+  agents.ts              agent identities and decision briefings
+  answers.ts             scripted response engine (what-if math + scenario ops)
 components/
   World.tsx              canvas, tone mapping, backdrop
   world/                 palette, camera rig, ground, props, the three buildings,
                          miniature figures, hover nameplates, the fleet,
                          client traffic, inspectable hit areas
-  ui/                    arrival screen, chrome, workspace, agent panel,
-                         object inspector, district timeline,
+  ui/                    arrival screen, chrome + mode switcher, Observe wall,
+                         presenter bar, workspace, agent panel, Scenario Lab,
+                         Decision Desk, object inspector, district timeline,
                          interface primitives, the three operational panels
 ```
 

@@ -72,7 +72,13 @@ export interface Staffing {
   secondShift: boolean;
 }
 
-export type Scenario = "baseline" | "viral";
+export type Scenario = "baseline" | "viral" | "inventory-risk" | "service-surge";
+
+/** How the pick queue is sequenced — a plannable lever, not a constant. */
+export type PriorityPolicy = "promise-first" | "value-first" | "express-first";
+
+/** Reviewable concierge playbook — narrative only, no numeric derive impact. */
+export type ConciergePlaybook = "standard" | "protect-promise" | "waitlist-first";
 
 export interface SimState {
   scenario: Scenario;
@@ -87,6 +93,8 @@ export interface SimState {
   leadTimeAdj: number;
   /** product ids the planner has staged a reorder for */
   staged: Record<string, number>;
+  priorityPolicy: PriorityPolicy;
+  conciergePlaybook: ConciergePlaybook;
 }
 
 export interface ProductMetrics {

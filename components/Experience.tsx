@@ -1,10 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import "@/lib/store";
+import { useStore } from "@/lib/store";
 import { Arrival } from "./ui/Arrival";
+import { ObserveWall } from "./ui/ObserveWall";
 import { CornerCredit, Hint, ScenarioBar, Toast, TopBar } from "./ui/Chrome";
 import { Workspace, ProductSheet } from "./ui/Workspace";
+import { ModeInit } from "./ui/ModeInit";
+import { ScenarioLab } from "./ui/ScenarioLab";
+import { PresenterBar } from "./ui/PresenterBar";
+import { ActionCenter } from "./ui/ActionCenter";
 import { AgentPanel } from "./ui/AgentPanel";
 import { Inspector } from "./ui/Inspector";
 import { Timeline, TimelineToggle } from "./ui/Timeline";
@@ -40,22 +45,35 @@ function WorldLoading() {
 }
 
 export function Experience() {
+  // Observe is the TV framing: the district plus the wall, nothing else.
+  // setMode("observe") already closed every panel, so unmounting is clean.
+  const mode = useStore((s) => s.mode);
+  const observing = mode === "observe";
   return (
     <main className="relative h-full w-full overflow-hidden">
+      <ModeInit />
       <World />
 
-      <TopBar />
-      <Hint />
-      <TimelineToggle />
-      <Timeline />
-      <ScenarioBar />
-      <CornerCredit />
+      {observing ? (
+        <ObserveWall />
+      ) : (
+        <>
+          <TopBar />
+          <Hint />
+          <TimelineToggle />
+          <Timeline />
+          <ActionCenter />
+          {mode === "present" ? <PresenterBar /> : <ScenarioBar />}
+          <CornerCredit />
 
-      <Workspace />
-      <AgentPanel />
-      <Inspector />
-      <ProductSheet />
-      <Toast />
+          <Workspace />
+          <AgentPanel />
+          <Inspector />
+          <ProductSheet />
+          <ScenarioLab />
+          <Toast />
+        </>
+      )}
 
       <Arrival />
     </main>

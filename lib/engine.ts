@@ -40,7 +40,9 @@ export type EventKind =
   | "reorder.staged"
   | "client.conversations"
   | "agent.query"
-  | "scenario.stage";
+  | "scenario.stage"
+  | "plan.applied"
+  | "plan.reverted";
 
 /** Anything in the world that can be clicked for its story. */
 export type FocusKey =
@@ -101,6 +103,11 @@ export interface FlowState {
   departures: number;
   arrivals: number;
 
+  /** simulated purchase orders placed by an applied plan, landing later */
+  openPOs: { id: string; productId: string; units: number; landsOnMinute: number }[];
+  /** cumulative units landed from applied-plan POs, by style */
+  received: Record<string, number>;
+
   /** accumulators for aggregate event emission */
   sinceOrderReport: number;
   ordersSinceReport: number;
@@ -131,6 +138,8 @@ export function initialFlow(openUnits: number): FlowState {
     checkoutRate: 0,
     departures: 0,
     arrivals: 0,
+    openPOs: [],
+    received: {},
     sinceOrderReport: 0,
     ordersSinceReport: 0,
     sinceChatReport: 0,
@@ -338,6 +347,30 @@ export function stepFlow(
         why: `This order was placed ${p.leadTimeDays} days ago against a ${p.inboundEta}-day transit. It restores ${(p.inbound / p.velocity).toFixed(0)} days of cover.`,
         tone: "good",
         magnitude: p.inbound,
+        focus: "inbound",
+      });
+    }
+  }
+
+  /* ── applied-plan purchase orders landing ─────────────────────── */
+  const due = flow.openPOs.filter((po) => next.minute >= po.landsOnMinute);
+  if (due.length) {
+    next.openPOs = flow.openPOs.filter((po) => next.minute < po.landsOnMinute);
+    next.received = { ...flow.received };
+    for (const po of due) {
+      next.received[po.productId] = (next.received[po.productId] ?? 0) + po.units;
+      next.arrivals += 1;
+      const prod = byId(po.productId);
+      events.push({
+        minute: next.minute,
+        kind: "truck.arrived",
+        building: "atelier",
+        agent: "strategist",
+        title: `${n(po.units)} units of ${prod.name} landed`,
+        detail: `The reorder from your applied plan arrived at the dock and moved into racking.`,
+        why: `You approved this buy in the Scenario Lab; it travelled on the simulated supplier lead time and has now restored cover. Simulated stock only.`,
+        tone: "good",
+        magnitude: po.units,
         focus: "inbound",
       });
     }
@@ -649,6 +682,8 @@ export const KIND_LABEL: Record<EventKind, string> = {
   "client.conversations": "Clients",
   "agent.query": "Agent",
   "scenario.stage": "Event",
+  "plan.applied": "Decision",
+  "plan.reverted": "Revert",
 };
 
 export const PRODUCT_LABEL = (id: string) => byId(id).name;

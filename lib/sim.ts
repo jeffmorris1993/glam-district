@@ -7,6 +7,7 @@ import {
 } from "./catalog";
 import type {
   BoutiqueMetrics,
+  PriorityPolicy,
   FulfillmentMetrics,
   InventoryMetrics,
   Metrics,
@@ -70,6 +71,8 @@ export const DEFAULT_STATE: SimState = {
   staffing: { pickers: 14, shiftHours: 8, unitsPerLaborHour: 14, secondShift: false },
   leadTimeAdj: 0,
   staged: {},
+  priorityPolicy: "promise-first",
+  conciergePlaybook: "standard",
 };
 
 /* ── Order book generation (memoized, seed-stable) ───────────────── */
@@ -160,19 +163,29 @@ export const SURGE_UNITS: Record<string, number> = (() => {
 
 const TIER_RANK = { VIP: 0, Express: 1, Standard: 2 } as const;
 
-/** Sequencing rule: promise date, then tier, then order value. */
-const sequence = (book: Order[]) =>
-  book
-    .slice()
-    .sort(
-      (a, b) =>
-        a.promiseInDays - b.promiseInDays ||
-        TIER_RANK[a.tier] - TIER_RANK[b.tier] ||
-        b.value - a.value,
-    );
+/* Sequencing is a plannable lever. promise-first is the house rule; the
+   others trade standard-order promises for revenue or tier protection. */
+const COMPARATORS: Record<PriorityPolicy, (a: Order, b: Order) => number> = {
+  "promise-first": (a, b) =>
+    a.promiseInDays - b.promiseInDays || TIER_RANK[a.tier] - TIER_RANK[b.tier] || b.value - a.value,
+  "value-first": (a, b) =>
+    b.value - a.value || a.promiseInDays - b.promiseInDays || TIER_RANK[a.tier] - TIER_RANK[b.tier],
+  "express-first": (a, b) =>
+    TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.promiseInDays - b.promiseInDays || b.value - a.value,
+};
 
-const SORTED_BASE = sequence(BASE_BOOK);
-const SORTED_VIRAL = sequence([...BASE_BOOK, ...SURGE_BOOK]);
+export const sequence = (book: Order[], policy: PriorityPolicy) =>
+  book.slice().sort(COMPARATORS[policy]);
+
+const VIRAL_BOOK = [...BASE_BOOK, ...SURGE_BOOK];
+const SEQ_CACHE: Record<"base" | "viral", Partial<Record<PriorityPolicy, Order[]>>> = {
+  base: {},
+  viral: {},
+};
+function sequenced(viral: boolean, policy: PriorityPolicy): Order[] {
+  const slot = SEQ_CACHE[viral ? "viral" : "base"];
+  return (slot[policy] ??= sequence(viral ? VIRAL_BOOK : BASE_BOOK, policy));
+}
 
 /**
  * Live state owned by the clock in lib/engine.ts. When present the order
@@ -183,13 +196,15 @@ const SORTED_VIRAL = sequence([...BASE_BOOK, ...SURGE_BOOK]);
 export interface LiveState {
   queueUnits?: number;
   sold?: Record<string, number>;
+  /** units landed from applied-plan purchase orders, by style */
+  received?: Record<string, number>;
 }
 
 /* ── Fulfillment ─────────────────────────────────────────────────── */
 
 function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
   const viral = s.scenario === "viral" && s.viralStage >= 2;
-  const sorted = viral ? SORTED_VIRAL : SORTED_BASE;
+  const sorted = sequenced(viral, s.priorityPolicy);
 
   const { pickers, shiftHours, unitsPerLaborHour, secondShift } = s.staffing;
   // A second shift adds hours but carries a small productivity penalty.
@@ -305,7 +320,10 @@ function deriveInventory(s: SimState, live?: LiveState): InventoryMetrics {
       : depleted
         ? SURGE_UNITS[product.id] ?? 0
         : 0;
-    const onHandEff = Math.max(0, product.onHand - consumed);
+    const onHandEff = Math.max(
+      0,
+      product.onHand - consumed + (live?.received?.[product.id] ?? 0),
+    );
     const leadTime = Math.max(7, product.leadTimeDays + s.leadTimeAdj);
 
     const inboundUsable = product.inbound;
@@ -380,9 +398,13 @@ function deriveInventory(s: SimState, live?: LiveState): InventoryMetrics {
 function deriveBoutique(s: SimState, inv: InventoryMetrics, ful: FulfillmentMetrics): BoutiqueMetrics {
   const traffic = s.scenario === "viral" && s.viralStage >= 1;
   const inquiryWave = s.scenario === "viral" && s.viralStage >= 4;
+  // A customer-service surge: question volume spikes without a sales spike.
+  const serviceSurge = s.scenario === "service-surge";
 
   const sessions = Math.round(
-    ASSUMPTIONS.baseSessions * s.demandMultiplier * (traffic ? ASSUMPTIONS.sessionSpike : 1),
+    ASSUMPTIONS.baseSessions *
+      s.demandMultiplier *
+      (traffic ? ASSUMPTIONS.sessionSpike : serviceSurge ? 1.25 : 1),
   );
   const unitsToday = inv.items.reduce((n, i) => n + i.unitsSoldToday, 0);
   const revenueToday = inv.items.reduce((n, i) => n + i.unitsSoldToday * i.product.price, 0);
@@ -403,7 +425,8 @@ function deriveBoutique(s: SimState, inv: InventoryMetrics, ful: FulfillmentMetr
   const top = inv.items.slice().sort((a, b) => b.unitsSoldToday * b.product.price - a.unitsSoldToday * a.product.price)[0];
 
   const lowStock = Object.values(availability).some((a) => a !== "In stock");
-  const status: WorldStatus = inquiryWave || lowStock || ful.status === "critical" ? "watch" : "healthy";
+  const status: WorldStatus =
+    inquiryWave || serviceSurge || lowStock || ful.status === "critical" ? "watch" : "healthy";
 
   return {
     sessions,
@@ -412,7 +435,9 @@ function deriveBoutique(s: SimState, inv: InventoryMetrics, ful: FulfillmentMetr
     aov: revenueToday / Math.max(1, ordersToday),
     revenueToday,
     inquiries: Math.round(
-      ASSUMPTIONS.baseInquiries * s.demandMultiplier * (inquiryWave ? ASSUMPTIONS.inquirySpike : traffic ? 1.5 : 1),
+      ASSUMPTIONS.baseInquiries *
+        s.demandMultiplier *
+        (inquiryWave || serviceSurge ? ASSUMPTIONS.inquirySpike : traffic ? 1.5 : 1),
     ),
     topProduct: top,
     availability,

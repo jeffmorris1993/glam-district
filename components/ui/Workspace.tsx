@@ -43,6 +43,7 @@ export function Workspace() {
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
       if (e.key !== "Escape") return;
+      if (s.lab.open) return; // the Scenario Lab owns escape while open
       if (s.openAgent) return; // the agent panel handles its own escape
       if (s.phase === "building") s.focusBuilding(null);
     };

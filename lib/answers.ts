@@ -1,5 +1,8 @@
 import { DEMO_ORDERS, HERO_ID, POLICIES, PRODUCTS, byId } from "./catalog";
 import { ASSUMPTIONS, derive, shipWindow, type LiveState } from "./sim";
+import { pickersToClear, type Situation } from "./scenarios";
+import type { FlowState } from "./engine";
+import { clockLabel } from "./engine";
 import { compactMoney, days, money, n, pct } from "./fmt";
 import type { AgentId, Metrics, SimState } from "./types";
 
@@ -10,11 +13,25 @@ import type { AgentId, Metrics, SimState } from "./types";
    nothing here is free-text invention.
    ════════════════════════════════════════════════════════════════════ */
 
+/** Deterministic Scenario Lab operations a reply can carry. */
+export interface LabOps {
+  create?: { name: string; patch: Partial<SimState>; note?: string }[];
+  /** scenario names (or fresh creations) to place side-by-side */
+  compareNames?: string[];
+  open?: boolean;
+}
+
+export interface ReplyCtx {
+  flow?: FlowState;
+  situations?: Situation[];
+}
+
 export interface AgentReply {
   text: string;
   refs: string[];
   products?: string[];
   order?: string;
+  labOps?: LabOps;
 }
 
 const WORDS: Record<string, number> = {
@@ -34,22 +51,6 @@ function firstNumber(q: string): number | null {
 
 const has = (q: string, ...terms: string[]) => terms.some((t) => q.includes(t));
 
-/** Smallest picker count that clears every promise, or null if out of range. */
-function pickersToClear(s: SimState, live: LiveState, max = 120): number | null {
-  const risk = (p: number) =>
-    derive({ ...s, staffing: { ...s.staffing, pickers: p } }, live).fulfillment.atRisk;
-  if (risk(s.staffing.pickers) === 0) return s.staffing.pickers;
-  if (risk(max) > 0) return null;
-  let lo = s.staffing.pickers;
-  let hi = max;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (risk(mid) === 0) hi = mid;
-    else lo = mid + 1;
-  }
-  return lo;
-}
-
 function matchProduct(q: string) {
   const l = q.toLowerCase();
   return (
@@ -65,6 +66,176 @@ function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): Agen
   const f = m.fulfillment;
   const avgUnits = f.openUnits / Math.max(1, f.openOrders);
   const plan = `Pick plan · ${s.staffing.pickers} associates × ${s.staffing.shiftHours}h${s.staffing.secondShift ? " × 2 shifts" : ""}`;
+  const labor = (p: number, second = s.staffing.secondShift) =>
+    derive({ ...s, staffing: { ...s.staffing, pickers: p, secondShift: second } }, live).fulfillment;
+
+  // "compare a second shift against temporary staffing" — before the staffing
+  // branch, which would otherwise swallow the word "staffing".
+  if (has(q, "compare") && has(q, "second shift")) {
+    const clear = pickersToClear(s, live) ?? Math.min(48, s.staffing.pickers + 10);
+    const temps = labor(clear);
+    const shift = labor(s.staffing.pickers, true);
+    return {
+      text:
+        `Side by side, from the same book:\n\n` +
+        `• Temporary staffing (${clear} associates) — ${n(temps.capacityUnits)} units/day, at-risk ${n(temps.atRisk)}, labor ${money(temps.laborCostDay)}/day, ${money(temps.costPerOrder, 2)}/order.\n` +
+        `• Second shift (same roster, doubled hours at the 8% penalty) — ${n(shift.capacityUnits)} units/day, at-risk ${n(shift.atRisk)}, labor ${money(shift.laborCostDay)}/day, ${money(shift.costPerOrder, 2)}/order.\n\n` +
+        `Temps are the cheaper path to clearing the book; the second shift buys more throughput than you need at a higher bill — but ramps nothing (your existing team, after hours). I've put both in the Scenario Lab so you can weigh them.`,
+      refs: [plan, `Projections · derive() on the live book`],
+      labOps: {
+        create: [
+          {
+            name: `Add ${Math.max(0, clear - s.staffing.pickers)} temps`,
+            patch: { staffing: { ...s.staffing, pickers: clear } },
+            note: "Sized to clear every promise.",
+          },
+          {
+            name: "Second shift",
+            patch: { staffing: { ...s.staffing, secondShift: true } },
+            note: "Same roster, doubled hours, 8% off-shift penalty.",
+          },
+        ],
+        compareNames: [`Add ${Math.max(0, clear - s.staffing.pickers)} temps`, "Second shift"],
+        open: true,
+      },
+    };
+  }
+
+  // "what's the cheapest approach?"
+  if (has(q, "cheapest", "lowest cost", "least expensive", "cheapest option")) {
+    const clear = pickersToClear(s, live);
+    const candidates: { name: string; f: ReturnType<typeof labor>; patch: Partial<SimState> }[] = [
+      { name: "Hold course", f, patch: {} },
+    ];
+    if (clear && clear > s.staffing.pickers)
+      candidates.push({
+        name: `Add ${clear - s.staffing.pickers} temps`,
+        f: labor(clear),
+        patch: { staffing: { ...s.staffing, pickers: clear } },
+      });
+    if (!s.staffing.secondShift)
+      candidates.push({
+        name: "Second shift",
+        f: labor(s.staffing.pickers, true),
+        patch: { staffing: { ...s.staffing, secondShift: true } },
+      });
+    if (s.priorityPolicy === "promise-first")
+      candidates.push({
+        name: "Reprioritize: value first",
+        f: derive({ ...s, priorityPolicy: "value-first" }, live).fulfillment,
+        patch: { priorityPolicy: "value-first" },
+      });
+    const ranked = candidates.slice().sort((a, b) => a.f.laborCostDay - b.f.laborCostDay);
+    return {
+      text:
+        `Ranked purely by daily labor cost:\n\n` +
+        ranked
+          .map(
+            (c, i) =>
+              `${i + 1}. ${c.name} — ${money(c.f.laborCostDay)}/day, at-risk ${n(c.f.atRisk)}, on-time ${pct(c.f.onTimeRate, 0)}`,
+          )
+          .join("\n") +
+        `\n\nCheapest is not free: every dollar saved here is paid in late promises or customer experience. ` +
+        `If cost is your binding constraint, the top of this list is your answer — compare before you commit.`,
+      refs: [plan, "Ranking · laborCostDay ascending, deterministic"],
+      labOps: {
+        create: ranked
+          .filter((c) => c.name !== "Hold course")
+          .slice(0, 2)
+          .map((c) => ({ name: c.name, patch: c.patch, note: "Created from your cost question." })),
+        open: false,
+      },
+    };
+  }
+
+  // "what option protects the most customers?"
+  if (has(q, "protect", "most customers", "customer experience", "least late")) {
+    const clear = pickersToClear(s, live);
+    const options: { name: string; f: ReturnType<typeof labor> }[] = [
+      { name: "Hold course", f },
+      ...(clear && clear > s.staffing.pickers
+        ? [{ name: `Add ${clear - s.staffing.pickers} temps`, f: labor(clear) }]
+        : []),
+      ...(!s.staffing.secondShift ? [{ name: "Second shift", f: labor(s.staffing.pickers, true) }] : []),
+      {
+        name: "Reprioritize: value first",
+        f: derive({ ...s, priorityPolicy: "value-first" }, live).fulfillment,
+      },
+    ];
+    const ranked = options.slice().sort((a, b) => a.f.atRisk - b.f.atRisk || a.f.laborCostDay - b.f.laborCostDay);
+    const best = ranked[0];
+    return {
+      text:
+        `Measured by promises kept (fewest orders at risk):\n\n` +
+        ranked
+          .map((o, i) => `${i + 1}. ${o.name} — ${n(o.f.atRisk)} at risk, ${pct(o.f.onTimeRate, 0)} on-time, ${money(o.f.laborCostDay)}/day`)
+          .join("\n") +
+        `\n\n${best.name} protects the most customers on this book. Note that value-first ranks ${ranked.findIndex((o) => o.name.includes("value")) + 1} of ${ranked.length} here — it protects revenue, not promises. The trade is yours to make.`,
+      refs: [plan, "Ranking · atRisk ascending, deterministic"],
+    };
+  }
+
+  // "launch readiness" — before the handle-another branch ("another drop").
+  if (has(q, "launch", "readiness", "ready for a drop", "another drop", "drop-ready")) {
+    const hypoQueue = (live.queueUnits ?? f.openUnits) + 4000;
+    const hypo = derive({ ...s, demandMultiplier: s.demandMultiplier * 2 }, { ...live, queueUnits: hypoQueue });
+    const need = pickersToClear({ ...s, demandMultiplier: s.demandMultiplier * 2 }, { ...live, queueUnits: hypoQueue });
+    const headroom = Math.max(0, 1 - f.utilization);
+    return {
+      text:
+        `Stress-testing a hypothetical drop — demand at ${(s.demandMultiplier * 2).toFixed(1)}× and ~4,000 surge units landing on today's queue:\n\n` +
+        `• Current headroom: ${pct(headroom, 0)} of capacity unused.\n` +
+        `• Under the drop: backlog reaches ${days(hypo.fulfillment.backlogDays)}, ${n(hypo.fulfillment.atRisk)} orders at risk at today's roster.\n` +
+        `• Staffing to hold promises through it: ${need ? `${need} associates (${need - s.staffing.pickers > 0 ? "+" : ""}${need - s.staffing.pickers} vs. today)` : "beyond 120 — a second shift becomes necessary"}.\n\n` +
+        `I've staged a drop-ready roster in the Scenario Lab — a simulated readiness check, not a commitment.`,
+      refs: [plan, "Hypothetical · 2× demand + 4,000 surge units"],
+      labOps: need
+        ? {
+            create: [
+              {
+                name: "Drop-ready staffing",
+                patch: { staffing: { ...s.staffing, pickers: need } },
+                note: "Sized to hold every promise through a hypothetical viral drop.",
+              },
+            ],
+          }
+        : undefined,
+    };
+  }
+
+  // "create another option with a lower budget"
+  if (has(q, "lower budget", "cheaper option", "smaller budget", "less money", "lower cost option")) {
+    const clear = pickersToClear(s, live) ?? Math.min(48, s.staffing.pickers + 10);
+    const cap = labor(clear).laborCostDay * 0.8;
+    let best = s.staffing.pickers;
+    for (let p = clear; p >= s.staffing.pickers; p--) {
+      if (labor(p).laborCostDay <= cap) {
+        best = p;
+        break;
+      }
+    }
+    const bf = labor(best);
+    return {
+      text:
+        `Working to roughly 80% of the full-clear budget (${money(cap)}/day): the best plan inside it is ${best} associates — ` +
+        `${n(bf.capacityUnits)} units/day, at-risk ${n(bf.atRisk)}, ${money(bf.laborCostDay)}/day. ` +
+        (bf.atRisk > 0
+          ? `That leaves ${n(bf.atRisk)} orders past their promise — the price of the smaller budget, stated plainly.`
+          : `It still clears every promise.`) +
+        ` It's in the Lab for comparison.`,
+      refs: [plan, `Budget cap · ${money(cap)}/day (80% of full clear)`],
+      labOps: {
+        create: [
+          {
+            name: `Budget plan (${best} associates)`,
+            patch: { staffing: { ...s.staffing, pickers: best } },
+            note: "Constrained to ~80% of the full-clear labor budget.",
+          },
+        ],
+        open: true,
+      },
+    };
+  }
 
   // "what happens if I add five workers" / staffing changes
   if (has(q, "add", "hire", "more worker", "more associate", "more picker", "staff", "headcount", "remove", "cut")) {
@@ -84,8 +255,18 @@ function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): Agen
           ? clear
             ? `To clear the book entirely you need ${clear} associates — ${clear - s.staffing.pickers} more than today.`
             : `Even at 60 associates some orders miss; a second shift would be the next lever.`
-          : `That clears every promise in the book.`),
+          : `That clears every promise in the book.`) +
+        ` I've added this as a draft in the Scenario Lab so you can compare it.`,
       refs: [plan, `Open book · ${n(f.openOrders)} orders`, `Labour rate · ${money(ASSUMPTIONS.laborRate, 2)}/hr`],
+      labOps: {
+        create: [
+          {
+            name: `${dir > 0 ? "Add" : "Cut"} ${delta} associates`,
+            patch: { staffing: { ...s.staffing, pickers: next } },
+            note: "Created from your what-if question.",
+          },
+        ],
+      },
     };
   }
 
@@ -244,9 +425,24 @@ function strategistReply(q: string, m: Metrics, s: SimState, live: LiveState): A
           )
           .join("\n") +
         `\n\nQuantities are sized to lead time plus ${s.coverDays} days at planning velocity, rounded to case packs. ` +
-        `Stage any of them in the reorder table to see the open-to-buy move. Simulated scenario only.`,
+        `I've staged the full plan as a draft in the Scenario Lab — compare it against a leaner cut before applying. Simulated scenario only.`,
       refs: [assume, `Open-to-buy · ${compactMoney(inv.openToBuy)}`, `Case packs · 25–100 units`],
       products: list.slice(0, 3).map((i) => i.product.id),
+      labOps: {
+        create: [
+          {
+            name: "Proposed buying plan",
+            patch: {
+              staged: {
+                ...s.staged,
+                ...Object.fromEntries(list.map((i) => [i.product.id, i.suggestedReorder])),
+              },
+            },
+            note: `Every open reorder window filled at the suggested quantity — ${compactMoney(total)} of the ${compactMoney(inv.openToBuy)} open-to-buy.`,
+          },
+        ],
+        open: true,
+      },
     };
   }
 
@@ -312,10 +508,38 @@ function strategistReply(q: string, m: Metrics, s: SimState, live: LiveState): A
 
 /* ── Glam Concierge ──────────────────────────────────────────────── */
 
-function conciergeReply(q: string, m: Metrics): AgentReply {
+function conciergeReply(q: string, m: Metrics, s: SimState, ctx?: ReplyCtx): AgentReply {
   const inv = m.inventory;
   const avail = m.boutique.availability;
   const win = shipWindow(m.fulfillment);
+
+  // "how are inquiries trending?"
+  if (has(q, "trend", "inquiry volume", "inquiries", "question volume", "how many questions")) {
+    const b = m.boutique;
+    const multiple = b.inquiries / ASSUMPTIONS.baseInquiries;
+    const low = inv.items.filter((i) => avail[i.product.id] !== "In stock");
+    const handled = ctx?.flow ? Math.round(ctx.flow.conversationsToday) : null;
+    const playbook = s.conciergePlaybook;
+    return {
+      text:
+        `Question volume is running ${multiple.toFixed(1)}× the ${n(ASSUMPTIONS.baseInquiries)}-a-day baseline` +
+        (handled !== null ? ` — ${n(handled)} handled so far today` : "") +
+        `. ` +
+        (low.length
+          ? `The drivers are availability questions on ${low.map((i) => i.product.name).join(", ")} — scarcity always asks twice. `
+          : `Nothing unusual is driving it; the mix is styling, shipping and order status. `) +
+        `The current playbook is “${playbook}”.` +
+        (low.length
+          ? ` When scarcity drives volume, the playbook is the real decision — the options are in the Scenario Lab if you want to compare how we handle it.`
+          : ""),
+      refs: [
+        `Inquiries · ${n(b.inquiries)}/day vs ${n(ASSUMPTIONS.baseInquiries)} base`,
+        `Low stock · ${low.length} styles`,
+        `Playbook · ${playbook}`,
+      ],
+      labOps: low.length ? { open: true } : undefined,
+    };
+  }
   const named = matchProduct(q);
   const budget = firstNumber(q);
 
@@ -481,6 +705,37 @@ function conciergeReply(q: string, m: Metrics): AgentReply {
   };
 }
 
+/* ── The daily briefing: any agent can give the cross-district read ── */
+
+function briefingReply(m: Metrics, s: SimState, ctx?: ReplyCtx): AgentReply {
+  const f = m.fulfillment;
+  const inv = m.inventory;
+  const b = m.boutique;
+  const flow = ctx?.flow;
+  const open = (ctx?.situations ?? []).length;
+  const when = flow ? clockLabel(flow.minute).label : "today";
+
+  return {
+    text:
+      `The district as of ${when}:\n\n` +
+      `• Fulfillment — ${n(f.openOrders)} orders open, ${days(f.backlogDays)} of backlog, ${pct(f.onTimeRate, 0)} on-time` +
+      (f.atRisk ? ` with ${n(f.atRisk)} at risk (${compactMoney(f.atRiskValue)})` : "") +
+      (flow ? `. ${n(Math.round(flow.packedToday))} units packed and ${flow.trucksToday} ${flow.trucksToday === 1 ? "van" : "vans"} dispatched so far today.` : ".") +
+      `\n• Buying — ${inv.critical.length} ${inv.critical.length === 1 ? "style" : "styles"} critical, ${inv.watch.length} on watch; ${compactMoney(inv.retailValue)} on hand at retail; ${compactMoney(inv.openToBuy - inv.stagedCost)} of open-to-buy uncommitted.` +
+      `\n• Boutique — ${n(b.sessions)} sessions converting at ${pct(b.conversion, 2)}, ${n(b.inquiries)} client questions` +
+      (flow ? ` (${n(Math.round(flow.conversationsToday))} handled so far today)` : "") +
+      `.\n\n` +
+      (open > 0
+        ? `${open} ${open === 1 ? "situation is" : "situations are"} waiting on a decision in the Decision Desk — each comes with options to compare before you commit.`
+        : `Nothing is waiting on a decision. A quiet book is a fine time to pressure-test assumptions in the Scenario Lab.`),
+    refs: [
+      `District clock · ${when}`,
+      `Open decisions · ${open}`,
+      "All figures · live simulated state",
+    ],
+  };
+}
+
 /* ── Entry point ─────────────────────────────────────────────────── */
 
 export function respond(
@@ -489,9 +744,12 @@ export function respond(
   m: Metrics,
   s: SimState,
   live: LiveState,
+  ctx?: ReplyCtx,
 ): AgentReply {
   const q = question.toLowerCase().trim();
+  if (has(q, "briefing", "daily brief", "run me through", "how are things", "how is the business", "summary of the"))
+    return briefingReply(m, s, ctx);
   if (agent === "analyst") return analystReply(q, m, s, live);
   if (agent === "strategist") return strategistReply(q, m, s, live);
-  return conciergeReply(q, m);
+  return conciergeReply(q, m, s, ctx);
 }
