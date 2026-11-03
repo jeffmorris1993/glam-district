@@ -155,6 +155,18 @@ shift open/close, inventory crossings, replenishment landings, client conversati
 staffing changes. Each entry carries its magnitude and its cause, and clicking one jumps
 to the object that produced it.
 
+### The business clock
+
+One simulated calendar, all times **US Eastern**: Day 1 is a Monday, the floor runs
+7:00 AM – close (shift length is a plan input), and the warehouse is dark on Sundays
+while orders keep arriving around the clock. The presenter's pause control freezes
+*demo time* — it is labeled as a presentation control everywhere, distinct from the
+business state of the floor being open or closed. Every major Fulfillment metric
+carries a **"How is this calculated?"** inspector with its formula, the live input
+values, and a plain-English reading; a *Today reconciles* ledger ties queue, packed
+units, parcels, staged dock and van departures together at all times. Modeling
+assumptions a real warehouse would calibrate are listed on the panel itself.
+
 ### Determinism
 
 A seeded RNG (`mulberry32`) builds a stable order book once; `derive()` is pure. The
@@ -166,11 +178,11 @@ them. There is no model call and no API key anywhere in this prototype.
 | Quantity | How it is computed |
 | --- | --- |
 | Daily capacity | `pickers × shiftHours × unitsPerLaborHour` (×2 and ×0.92 on a second shift) |
-| Pack rate | capacity spread across the shift; zero outside it |
-| Open book | the sequenced order book, truncated to the units still queued |
-| Ship day | promise date → tier → value; cumulative units ÷ capacity |
-| At risk | `shipDay > promiseInDays` |
-| Cost per order | `(labour + fixed overhead) ÷ orders shipped + packaging` |
+| Pack rate | capacity spread across the shift; zero outside it and on Sundays |
+| Open book | the priority book minus its packed head, plus arrivals not yet itemized — reconciles to the live queue exactly |
+| Ship day | orders fill the **rest of today's shift** first, then each following working day at full capacity (Sundays closed) |
+| At risk | projected pack day lands after the promise deadline, counted in business days — today counts only while the floor is open |
+| Cost per order | `(labour + fixed overhead) ÷ full-day throughput + packaging` — a daily economic figure that does not drift with the time of day |
 | On hand | catalogue stock minus units actually packed, attributed by sales mix |
 | Days of cover | `(on hand + in transit) ÷ effective daily velocity` |
 | Risk band | `cover < leadTime` → critical · `< leadTime + coverDays` → watch |

@@ -9,7 +9,7 @@ import type { SimState } from "./types";
    the deterministic engine (risk bands, backlog alarms, situations).
    ════════════════════════════════════════════════════════════════════ */
 
-export type PresetId = "normal" | "viral-drop" | "inventory-risk" | "service-surge";
+export type PresetId = "normal" | "morning-start" | "viral-drop" | "inventory-risk" | "service-surge";
 
 export interface Preset {
   id: PresetId;
@@ -19,6 +19,8 @@ export interface Preset {
   state: Partial<SimState>;
   /** presets that use the staged viral choreography */
   arm?: "viral";
+  /** ticks to fast-forward after the reset, so the demo opens with history */
+  warmupTicks?: number;
   /** a narrated opener for the activity feed */
   opener?: Omit<NewEvent, "minute">;
 }
@@ -29,6 +31,27 @@ export const PRESETS: Preset[] = [
     name: "Normal Business Day",
     blurb: "The baseline: steady trading, a clean book, nothing on fire.",
     state: {},
+  },
+  {
+    id: "morning-start",
+    name: "Morning Start",
+    blurb:
+      "Open the curtain at 11:15 AM ET: the floor has been packing since 7, vans have left, and the timeline has a morning's history.",
+    state: {},
+    // 32 ticks × 5 simulated minutes ≈ 2h40m of real operation after the
+    // 8:35 AM boot — enough for packed units, dispatches and intake reports.
+    warmupTicks: 32,
+    opener: {
+      kind: "shift.open",
+      building: "fulfillment",
+      agent: "analyst",
+      title: "Mid-morning on the floor",
+      detail:
+        "The shift opened at 7:00 AM ET. Everything below — units packed, parcels staged, vans dispatched — accumulated tick by tick from the same deterministic clock.",
+      why: "A presenter preset: the demo starts with the warehouse visibly operating instead of at zero. No figures were fabricated; the clock simply ran before the curtain opened.",
+      tone: "info",
+      focus: "packline",
+    },
   },
   {
     id: "viral-drop",

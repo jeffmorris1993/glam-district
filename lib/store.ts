@@ -50,6 +50,8 @@ interface UIState {
   scenarioAuto: boolean;
   /** when true, newly detected situations stay hidden until the presenter reveals them */
   holdSituations: boolean;
+  /** the last scenario preset applied — drives the presenter bar's active pill */
+  activePreset: PresetId;
   actionCenterOpen: boolean;
 
   /** conditions the district has crossed into, awaiting a decision */
@@ -158,6 +160,8 @@ const liveOf = (f: FlowState): LiveState => ({
   queueUnits: f.queueUnits,
   sold: f.sold,
   received: f.received,
+  minute: f.minute,
+  packedCumulative: f.packedCumulative,
 });
 
 const BOOT_METRICS = derive(DEFAULT_STATE);
@@ -169,6 +173,7 @@ const INITIAL_UI: UIState = {
   clock: { paused: false, speed: 1 },
   scenarioAuto: true,
   holdSituations: false,
+  activePreset: "normal",
   actionCenterOpen: false,
   situations: [],
   situationLog: {},
@@ -473,9 +478,16 @@ export const useStore = create<Store>()((set, get) => ({
       const sim: SimState = { ...simOf(s), viralStage: stage };
 
       // Stage two is the only stage that moves physical state: the surge
-      // book lands in the queue, and its units come out of racking.
+      // book lands in the queue (and counts as intake, so the day's
+      // arrived-vs-packed reconciliation stays exact).
       const flow: FlowState =
-        stage === 2 ? { ...s.flow, queueUnits: s.flow.queueUnits + SURGE_TOTAL_UNITS } : s.flow;
+        stage === 2
+          ? {
+              ...s.flow,
+              queueUnits: s.flow.queueUnits + SURGE_TOTAL_UNITS,
+              arrivedUnitsToday: s.flow.arrivedUnitsToday + SURGE_TOTAL_UNITS,
+            }
+          : s.flow;
 
       const appended = withEvents({ ...s, flow }, [
         { ...STAGE_COPY[stage - 1], minute: flow.minute },
@@ -498,6 +510,7 @@ export const useStore = create<Store>()((set, get) => ({
       runToken: token,
       running: auto,
       scenario: "viral",
+      activePreset: "viral-drop",
       viralStage: 0,
       toast: null,
       metrics: derive({ ...simOf(s), scenario: "viral", viralStage: 0 }, liveOf(s.flow)),
@@ -519,6 +532,7 @@ export const useStore = create<Store>()((set, get) => ({
       const flow = initialFlow(metrics.fulfillment.openUnits);
       const fresh = {
         ...base,
+        activePreset: id,
         runToken: s.runToken + 1,
         running: false,
         events: [] as DistrictEvent[],
@@ -545,13 +559,32 @@ export const useStore = create<Store>()((set, get) => ({
         metrics,
         flow,
       };
-      if (!preset.opener) return fresh;
-      const appended = withEvents({ events: [], eventSeq: 0, flow, attention: null, attentionCoolUntil: 0 }, [
-        { ...preset.opener, minute: flow.minute },
-      ]);
+
+      // Some presets open mid-morning: fast-forward the same deterministic
+      // clock so the floor arrives with real history (packed units, staged
+      // parcels, dispatched vans, a populated timeline) — not fabricated.
+      const warmed = preset.warmupTicks
+        ? advanceTicks({ ...s, ...fresh } as Store, preset.warmupTicks)
+        : {};
+      const afterFlow = warmed.flow ?? flow;
+      const afterEvents = warmed.events ?? fresh.events;
+      const afterSeq = warmed.eventSeq ?? fresh.eventSeq;
+
+      if (!preset.opener) return { ...fresh, ...warmed };
+      const appended = withEvents(
+        {
+          events: afterEvents,
+          eventSeq: afterSeq,
+          flow: afterFlow,
+          attention: null,
+          attentionCoolUntil: 0,
+        },
+        [{ ...preset.opener, minute: afterFlow.minute }],
+      );
       const ev = appended.events[0];
       return {
         ...fresh,
+        ...warmed,
         ...appended,
         toast: { id: ev.id, title: ev.title, detail: ev.detail, tone: ev.tone },
       };
@@ -829,6 +862,7 @@ export const useStore = create<Store>()((set, get) => ({
       const metrics = derive(DEFAULT_STATE);
       return {
         ...DEFAULT_STATE,
+        activePreset: "normal" as PresetId,
         runToken: s.runToken + 1,
         running: false,
         events: [],

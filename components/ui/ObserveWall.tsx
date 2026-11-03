@@ -153,6 +153,7 @@ export function ObserveWall() {
   const phase = useStore((s) => s.phase);
   const minute = useStore((s) => s.flow.minute);
   const inShift = useStore((s) => s.flow.inShift);
+  const paused = useStore((s) => s.clock.paused);
   const scenario = useStore((s) => s.scenario);
   const latest = useStore((s) => s.events[0]);
   const { label } = clockLabel(minute);
@@ -167,11 +168,13 @@ export function ObserveWall() {
           <Wordmark small />
           <div className="hidden items-center gap-2 rounded-full border border-[rgba(58,43,35,.1)] bg-[rgba(253,251,248,.78)] px-3.5 py-[7px] backdrop-blur-md sm:flex">
             <span
-              className={`h-[5px] w-[5px] rounded-full ${inShift ? "a-breathe" : ""}`}
-              style={{ background: inShift ? TONE.healthy.dot : "#BCAB95" }}
+              className={`h-[5px] w-[5px] rounded-full ${inShift && !paused ? "a-breathe" : ""}`}
+              style={{ background: paused ? "#C98A3D" : inShift ? TONE.healthy.dot : "#BCAB95" }}
             />
             <span className="num text-[11.5px] text-[var(--espresso)]">{label}</span>
-            <span className="label text-[8px] text-[#A3927C]">{inShift ? "Floor open" : "Floor closed"}</span>
+            <span className="label text-[8px]" style={{ color: paused ? "#9A6523" : "#A3927C" }}>
+              {paused ? "Paused" : inShift ? "Floor open" : "Floor closed"}
+            </span>
           </div>
           {scenario !== "baseline" && (
             <div className="hidden items-center gap-2 rounded-full border border-[rgba(58,43,35,.1)] bg-[rgba(253,251,248,.78)] px-3.5 py-[7px] backdrop-blur-md md:flex">

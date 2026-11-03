@@ -296,14 +296,14 @@ function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): Agen
         text:
           `Nothing needs intervention. All ${n(f.openOrders)} open orders are scheduled on or before their promise date, ` +
           `and the floor is running at ${pct(f.utilization)} of capacity. ` +
-          `The tightest cohort is the ${n(f.byDay[1].orders)} orders sequenced for day two — they have about ${days(2 - f.backlogDays)} of slack.`,
+          `The tightest cohort is the ${n(f.byDay[1].orders)} orders sequenced for ${f.byDay[1].label} — they have about ${days(Math.max(0, 2 - f.backlogDays))} of slack.`,
         refs: [plan, `Queue · sorted by promise date, tier, value`],
       };
     }
     return {
       text:
         `${n(f.atRisk)} orders will miss their promise at the current plan — ${compactMoney(f.atRiskValue)} of revenue, ` +
-        `${pct(f.atRisk / f.openOrders)} of the book. They are all standard-tier orders promised in two days that the queue pushes to day ${f.byDay.findIndex((d) => d.orders > 0 && d.day > 2) + 1 || 3}. ` +
+        `${pct(f.atRisk / f.openOrders)} of the book. They are standard-tier orders promised in two business days that the schedule pushes past their deadline${f.queue.find((o) => o.atRisk) ? ` — the first lands ${f.queue.find((o) => o.atRisk)!.shipLabel}` : ""}. ` +
         (top.length
           ? `The first three by value: ${top.map((o) => `${o.id} (${o.customer}, ${o.city} — ${money(o.value)})`).join("; ")}. `
           : "") +
@@ -321,7 +321,7 @@ function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): Agen
       text:
         `Tomorrow's plan, computed from the current book:\n\n` +
         `• Staff ${target} associates on an ${s.staffing.shiftHours}-hour shift — ${n(alt.capacityUnits)} units of capacity.\n` +
-        `• Sequence by promise date, then tier, then order value. That puts ${n(alt.byDay[0].orders)} orders out tomorrow and ${n(alt.byDay[1].orders)} the day after.\n` +
+        `• Sequence by promise date, then tier, then order value. That schedules ${n(alt.byDay[1].orders)} orders for ${alt.byDay[1].label} and ${n(alt.byDay[2].orders)} for ${alt.byDay[2].label}.\n` +
         `• ${alt.atRisk === 0 ? "No orders breach their promise." : `${n(alt.atRisk)} orders still breach; escalate those to Express at the carrier.`}\n` +
         `• Labour runs ${money(alt.laborCostDay)}, landing cost per order at ${money(alt.costPerOrder, 2)}.\n\n` +
         `This is a simulated plan against demo data — it is not a staffing instruction.`,
@@ -335,7 +335,7 @@ function analystReply(q: string, m: Metrics, s: SimState, live: LiveState): Agen
       text:
         `Labour is ${money(f.laborCostDay)} a day (${s.staffing.pickers} associates × ${s.staffing.shiftHours}h at ${money(ASSUMPTIONS.laborRate, 2)}), ` +
         `plus ${money(ASSUMPTIONS.fixedOverheadDay)} of fixed facility overhead and ${money(ASSUMPTIONS.packagingPerOrder, 2)} of packaging per order. ` +
-        `Against ${n(f.shippedToday)} orders shipped that is ${money(f.costPerOrder, 2)} per order. ` +
+        `Across a full day's throughput of ${n(Math.min(f.openOrders, f.capacityPerDay))} orders that is ${money(f.costPerOrder, 2)} per order. ` +
         `Adding capacity lowers the fixed-cost share: the same question at ${s.staffing.pickers + 6} associates gives ` +
         `${money(derive({ ...s, staffing: { ...s.staffing, pickers: s.staffing.pickers + 6 } }, live).fulfillment
         .costPerOrder, 2)}.`,

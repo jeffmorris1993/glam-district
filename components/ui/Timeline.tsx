@@ -29,20 +29,31 @@ export function TimelineToggle() {
   const count = useStore((s) => s.events.length);
   const minute = useStore((s) => s.flow.minute);
   const inShift = useStore((s) => s.flow.inShift);
+  const paused = useStore((s) => s.clock.paused);
   if (phase === "arrival") return null;
 
   const { label } = clockLabel(minute);
 
   return (
     <div className="pointer-events-none absolute left-5 top-[76px] z-30 flex flex-col items-start gap-2 sm:left-7 sm:top-[84px]">
-      {/* the district clock */}
-      <div className="flex items-center gap-2 rounded-full border border-[rgba(58,43,35,.1)] bg-[rgba(253,251,248,.78)] px-3 py-[6px] backdrop-blur-md">
+      {/* the business clock — distinct from the presenter's pause control */}
+      <div
+        className="flex items-center gap-2 rounded-full border bg-[rgba(253,251,248,.78)] px-3 py-[6px] backdrop-blur-md"
+        style={{ borderColor: paused ? "rgba(201,138,61,.45)" : "rgba(58,43,35,.1)" }}
+        title={
+          paused
+            ? "The presenter paused the demo clock — business time is frozen; nothing moves until it resumes."
+            : "The simulated business clock (Eastern Time). The floor packs only during its shift; orders arrive around the clock."
+        }
+      >
         <span
-          className={`h-[5px] w-[5px] rounded-full ${inShift ? "a-breathe" : ""}`}
-          style={{ background: inShift ? TONE.healthy.dot : "#BCAB95" }}
+          className={`h-[5px] w-[5px] rounded-full ${inShift && !paused ? "a-breathe" : ""}`}
+          style={{ background: paused ? "#C98A3D" : inShift ? TONE.healthy.dot : "#BCAB95" }}
         />
         <span className="num text-[10.5px] text-[var(--espresso)]">{label}</span>
-        <span className="label text-[8px] text-[#A3927C]">{inShift ? "Floor open" : "Floor closed"}</span>
+        <span className="label text-[8px]" style={{ color: paused ? "#9A6523" : "#A3927C" }}>
+          {paused ? "Paused — presenter" : inShift ? "Floor open" : "Floor closed"}
+        </span>
       </div>
 
       <ActionCenterToggle />

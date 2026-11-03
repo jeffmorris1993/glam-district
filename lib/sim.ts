@@ -37,6 +37,37 @@ function rng(seed: number) {
   };
 }
 
+/* ── The simulated calendar (single time zone: US Eastern) ───────────
+   Day 1 is a Monday. The warehouse floor runs a shift that opens at
+   7:00 AM ET and is dark on Sundays; orders arrive around the clock,
+   seven days a week. All times in the demo are Eastern Time.
+   ──────────────────────────────────────────────────────────────────── */
+
+export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+/** the floor opens at 7:00 AM ET */
+export const SHIFT_START_MIN = 7 * 60;
+
+export const weekdayOf = (dayIdx: number) => WEEKDAYS[dayIdx % 7];
+/** the floor is dark on Sundays */
+export const isWorkday = (dayIdx: number) => dayIdx % 7 !== 6;
+
+/** "7:00 AM ET" from a minute-of-day */
+export function timeET(minOfDay: number) {
+  const h24 = Math.floor(minOfDay / 60) % 24;
+  const m = Math.floor(minOfDay % 60);
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${h24 < 12 ? "AM" : "PM"} ET`;
+}
+
+/** The business clock, from simulated minutes since midnight on Day 1 (Mon). */
+export const clockLabel = (minute: number) => {
+  const dayIdx = Math.floor(minute / 1440);
+  const day = dayIdx + 1;
+  const wd = weekdayOf(dayIdx);
+  const time = timeET(minute % 1440);
+  return { day, weekday: wd, time, label: `Day ${day} (${wd}) · ${time}` };
+};
+
 /* ── Fixed assumptions (fictional) ───────────────────────────────── */
 export const ASSUMPTIONS = {
   baseOpenOrders: 1240,
@@ -198,9 +229,16 @@ export interface LiveState {
   sold?: Record<string, number>;
   /** units landed from applied-plan purchase orders, by style */
   received?: Record<string, number>;
+  /** simulated minutes since midnight on Day 1 — makes scheduling time-aware */
+  minute?: number;
+  /** units ever packed since the simulation started (the book's packed head) */
+  packedCumulative?: number;
 }
 
 /* ── Fulfillment ─────────────────────────────────────────────────── */
+
+/** How far ahead the scheduler looks, in calendar days. */
+const HORIZON_DAYS = 28;
 
 function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
   const viral = s.scenario === "viral" && s.viralStage >= 2;
@@ -211,36 +249,139 @@ function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
   const laborHours = pickers * shiftHours * (secondShift ? 2 : 1);
   const capacityUnits = Math.round(laborHours * unitsPerLaborHour * (secondShift ? 0.92 : 1));
 
-  // The book is whatever the clock says is still waiting to be packed.
+  /* ── The calendar the schedule runs against ─────────────────────
+     Capacity exists only during the shift, and only on working days.
+     "Today" contributes whatever shift time is left right now; with no
+     live clock (a cold boot) the schedule assumes a full day ahead.  */
+  const minute = live?.minute;
+  const dayIdx = minute !== undefined ? Math.floor(minute / 1440) : 0;
+  const minOfDay = minute !== undefined ? minute % 1440 : SHIFT_START_MIN;
+  const shiftLenMin = shiftHours * 60 * (secondShift ? 2 : 1);
+  const shiftEndMin = SHIFT_START_MIN + shiftLenMin;
+  const floorOpenToday = isWorkday(dayIdx);
+  const remainingShiftMin = !floorOpenToday
+    ? 0
+    : Math.min(shiftLenMin, Math.max(0, shiftEndMin - Math.max(minOfDay, SHIFT_START_MIN)));
+  const capRemainingToday = Math.round(capacityUnits * (remainingShiftMin / shiftLenMin));
+
+  const capAt = (k: number) =>
+    k === 0 ? capRemainingToday : isWorkday(dayIdx + k) ? capacityUnits : 0;
+
+  // Promise deadlines count business days: today is business day one only
+  // while the floor still has shift time left; Sundays never count.
+  const deadlineFor = (() => {
+    const memo: number[] = [];
+    let count = 0;
+    for (let k = 0; k <= HORIZON_DAYS && memo.length < 6; k++) {
+      const counts = k === 0 ? remainingShiftMin > 0 : isWorkday(dayIdx + k);
+      if (counts) {
+        count++;
+        memo[count] = k;
+      }
+    }
+    return (p: number) => memo[Math.min(p, memo.length - 1)] ?? HORIZON_DAYS;
+  })();
+
+  const labelFor = (k: number) =>
+    k === 0 ? "Today" : k <= 6 ? weekdayOf(dayIdx + k) : `+${k}d`;
+
+  /* ── The remaining book ─────────────────────────────────────────
+     The floor packs the head of the priority sequence first, so the
+     orders still open are the book minus its packed head. Units that
+     arrived after the book was cut exist in the queue total but are
+     not yet itemized — they are carried as an explicit block so the
+     table reconciles with the live queue exactly.                   */
   const limit = live?.queueUnits;
+  let skip = Math.max(0, live?.packedCumulative ?? 0);
   const queue: ScheduledOrder[] = [];
+  let partialPackedUnits = 0;
   let taken = 0;
   for (const o of sorted) {
+    if (skip >= o.units) {
+      skip -= o.units;
+      continue; // fully packed and gone
+    }
     if (limit !== undefined && taken >= limit) break;
-    queue.push({ ...o, shipDay: 0, atRisk: false, slack: 0 });
-    taken += o.units;
+    const packedUnits = skip;
+    if (packedUnits > 0 && queue.length === 0) partialPackedUnits = packedUnits;
+    skip = 0;
+    queue.push({
+      ...o,
+      shipOffset: 0,
+      shipLabel: "Today",
+      atRisk: false,
+      slack: 0,
+      ...(packedUnits > 0 ? { packedUnits: Math.round(packedUnits) } : {}),
+    });
+    taken += o.units - packedUnits;
   }
 
+  // Arrived since the book was cut: in the queue total, not yet itemized.
+  const unlistedUnits = limit !== undefined ? Math.max(0, Math.round(limit - taken)) : 0;
+  const bookAvgUnits =
+    sorted.reduce((a, o) => a + o.units, 0) / Math.max(1, sorted.length);
+  const unlistedOrders = Math.round(unlistedUnits / Math.max(1, bookAvgUnits));
+  const avgValue = sorted.reduce((a, o) => a + o.value, 0) / Math.max(1, sorted.length);
+
+  /* ── Schedule against the calendar ──────────────────────────────── */
   let cum = 0;
   let atRisk = 0;
   let atRiskValue = 0;
+  let k = 0;
+  let capCum = capAt(0);
   const byDayMap = new Map<number, number>();
+  const place = (units: number) => {
+    cum += units;
+    while (capCum < cum && k < HORIZON_DAYS) {
+      k++;
+      capCum += capAt(k);
+    }
+    return k;
+  };
   for (const o of queue) {
-    cum += o.units;
-    const shipDay = Math.max(1, Math.ceil(cum / Math.max(1, capacityUnits)));
-    o.shipDay = shipDay;
-    o.slack = o.promiseInDays - shipDay;
-    o.atRisk = shipDay > o.promiseInDays;
+    const off = place(o.units - (o.packedUnits ?? 0));
+    o.shipOffset = off;
+    o.shipLabel = labelFor(off);
+    const due = deadlineFor(o.promiseInDays);
+    o.slack = due - off;
+    o.atRisk = off > due;
     if (o.atRisk) {
       atRisk++;
       atRiskValue += o.value;
     }
-    byDayMap.set(shipDay, (byDayMap.get(shipDay) ?? 0) + 1);
+    byDayMap.set(off, (byDayMap.get(off) ?? 0) + 1);
   }
 
-  const openUnits = cum;
-  const openOrders = queue.length;
-  const avgUnits = openUnits / Math.max(1, openOrders);
+  // The unlisted block schedules after the itemized book (it is the newest
+  // work) and is assumed standard-tier: promised within two business days.
+  let packableToday = queue.filter((o) => o.shipOffset === 0).length;
+  if (unlistedUnits > 0) {
+    const dueStd = deadlineFor(2);
+    let placed = 0;
+    while (placed < unlistedUnits) {
+      const room = Math.max(0, capCum - cum);
+      const block = Math.min(unlistedUnits - placed, room || unlistedUnits - placed);
+      const ordersHere = Math.round((block / Math.max(1, unlistedUnits)) * unlistedOrders);
+      if (room > 0) {
+        byDayMap.set(k, (byDayMap.get(k) ?? 0) + ordersHere);
+        if (k === 0) packableToday += ordersHere;
+        if (k > dueStd) {
+          atRisk += ordersHere;
+          atRiskValue += ordersHere * avgValue;
+        }
+        cum += block;
+        placed += block;
+      }
+      if (placed < unlistedUnits) {
+        if (k >= HORIZON_DAYS) break;
+        k++;
+        capCum += capAt(k);
+      }
+    }
+  }
+
+  const openUnits = Math.round(taken + unlistedUnits);
+  const openOrders = queue.length + unlistedOrders;
 
   // Daily inflow of new work, in units.
   const baseInflowUnits = PRODUCTS.reduce((n, p) => n + p.velocity, 0) * s.demandMultiplier;
@@ -250,21 +391,28 @@ function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
 
   const utilization = inflowUnits / Math.max(1, capacityUnits);
   const backlogDays = openUnits / Math.max(1, capacityUnits);
-  const shippedToday = Math.min(openOrders, Math.round(capacityUnits / Math.max(1, avgUnits)));
   const laborCostDay = Math.round(laborHours * ASSUMPTIONS.laborRate);
+  // Cost per order is a full-day economic figure: it spreads a day's labor
+  // and overhead across a full day's throughput, so it does not drift with
+  // the time of day the way the remaining-today numbers do.
+  const capacityPerDay = Math.round(capacityUnits / Math.max(1, bookAvgUnits));
+  const dayThroughput = Math.min(Math.max(1, openOrders), capacityPerDay);
   const costPerOrder =
     Math.round(
-      ((laborCostDay + ASSUMPTIONS.fixedOverheadDay) / Math.max(1, shippedToday) +
+      ((laborCostDay + ASSUMPTIONS.fixedOverheadDay) / Math.max(1, dayThroughput) +
         ASSUMPTIONS.packagingPerOrder) *
         100,
     ) / 100;
 
   const byDay = Array.from({ length: 6 }, (_, i) => ({
-    day: i + 1,
-    orders: byDayMap.get(i + 1) ?? 0,
+    offset: i,
+    label: labelFor(i),
+    orders: byDayMap.get(i) ?? 0,
+    closed: capAt(i) === 0,
   }));
-  const beyond = [...byDayMap.entries()].reduce((n, [d, c]) => (d > 6 ? n + c : n), 0);
+  const beyond = [...byDayMap.entries()].reduce((n, [d, c]) => (d > 5 ? n + c : n), 0);
   byDay[5].orders += beyond;
+  if (beyond > 0) byDay[5].label = `${labelFor(5)}+`;
 
   const riskShare = atRisk / Math.max(1, openOrders);
   const status: WorldStatus =
@@ -274,13 +422,21 @@ function deriveFulfillment(s: SimState, live?: LiveState): FulfillmentMetrics {
     openOrders,
     openUnits,
     surgeOrders: viral ? SURGE_BOOK.length : 0,
-    capacityPerDay: Math.round(capacityUnits / Math.max(1, avgUnits)),
+    capacityPerDay,
     capacityUnits,
     utilization,
     backlogDays,
     atRisk,
     atRiskValue,
-    shippedToday,
+    packableToday,
+    capRemainingToday,
+    remainingShiftMin,
+    shiftEndMin,
+    floorOpenToday,
+    promiseHorizon: deadlineFor(2),
+    unlistedOrders,
+    unlistedUnits,
+    partialPackedUnits,
     onTimeRate: 1 - riskShare,
     queue,
     byDay,

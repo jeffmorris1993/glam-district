@@ -2,7 +2,6 @@
 
 import { useStore } from "@/lib/store";
 import { PRESETS, type PresetId } from "@/lib/presets";
-import type { Scenario } from "@/lib/types";
 
 /* ─────────────────────────────────────────────────────────────────
    THE PRESENTER BAR
@@ -12,15 +11,9 @@ import type { Scenario } from "@/lib/types";
    here is repeatable — a preset is a full reset plus assumptions.
    ───────────────────────────────────────────────────────────────── */
 
-const ACTIVE_PRESET: Record<Scenario, PresetId> = {
-  baseline: "normal",
-  viral: "viral-drop",
-  "inventory-risk": "inventory-risk",
-  "service-surge": "service-surge",
-};
-
 const SHORT_NAME: Record<PresetId, string> = {
   normal: "Normal Day",
+  "morning-start": "Morning Start",
   "viral-drop": "Viral Drop",
   "inventory-risk": "Inventory Risk",
   "service-surge": "Service Surge",
@@ -77,7 +70,7 @@ export function PresenterBar() {
   const releaseSituations = useStore((s) => s.releaseSituations);
 
   const visible = phase !== "arrival";
-  const activePreset = ACTIVE_PRESET[scenario];
+  const activePreset = useStore((s) => s.activePreset);
 
   return (
     <div

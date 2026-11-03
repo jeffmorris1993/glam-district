@@ -59,10 +59,15 @@ export interface Order {
 
 /** An order enriched with the scheduling result of the current plan. */
 export interface ScheduledOrder extends Order {
-  /** 1-indexed day the order ships under current capacity */
-  shipDay: number;
+  /** calendar days from now until the order is packed (0 = later today) */
+  shipOffset: number;
+  /** short label for that day — "Today", "Tue", "+8d" */
+  shipLabel: string;
   atRisk: boolean;
+  /** calendar days between the projected pack day and the promise deadline */
   slack: number;
+  /** units of this order already packed (the order the floor is working now) */
+  packedUnits?: number;
 }
 
 export interface Staffing {
@@ -125,10 +130,26 @@ export interface FulfillmentMetrics {
   backlogDays: number;
   atRisk: number;
   atRiskValue: number;
-  shippedToday: number;
+  /** orders that can still be packed before today's shift ends (0 after close) */
+  packableToday: number;
+  /** units of capacity left in today's shift right now */
+  capRemainingToday: number;
+  /** minutes of shift remaining right now */
+  remainingShiftMin: number;
+  /** minute-of-day the floor closes under the current staffing plan */
+  shiftEndMin: number;
+  /** false on non-working days (the floor is dark on Sundays) */
+  floorOpenToday: boolean;
+  /** calendar offset of the standard 2-business-day promise deadline */
+  promiseHorizon: number;
+  /** newly arrived orders not yet itemized in the detailed book (estimate) */
+  unlistedOrders: number;
+  unlistedUnits: number;
+  /** units already packed of the order the floor is working right now */
+  partialPackedUnits: number;
   onTimeRate: number;
   queue: ScheduledOrder[];
-  byDay: { day: number; orders: number }[];
+  byDay: { offset: number; label: string; orders: number; closed: boolean }[];
   costPerOrder: number;
   laborCostDay: number;
   status: WorldStatus;

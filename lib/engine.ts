@@ -1,5 +1,9 @@
 import { HERO_ID, PRODUCTS, byId } from "./catalog";
-import { ASSUMPTIONS, MIX, SURGE_MIX } from "./sim";
+import { ASSUMPTIONS, MIX, SURGE_MIX, SHIFT_START_MIN, isWorkday } from "./sim";
+
+// The simulated calendar (Day 1 = Monday, all times ET) lives in sim.ts so
+// the pure derive layer can schedule against it; re-exported for consumers.
+export { clockLabel, timeET, weekdayOf, isWorkday, SHIFT_START_MIN, WEEKDAYS } from "./sim";
 import { compactMoney, n, pct } from "./fmt";
 import type { AgentId, BuildingId, Metrics, SimState } from "./types";
 
@@ -21,8 +25,6 @@ export const TICK_MINUTES = 5;
 export const PARCEL_UNITS = 1.35;
 /** parcels a van takes before it departs */
 export const TRUCK_LOAD = 210;
-/** the floor opens at 07:00 */
-export const SHIFT_START_MIN = 7 * 60;
 
 export type EventKind =
   | "shift.open"
@@ -93,6 +95,16 @@ export interface FlowState {
   trucksToday: number;
   conversationsToday: number;
 
+  /* reconciliation anchors — every "today" figure ties back to these */
+  /** units ever packed since the simulation started (never resets) */
+  packedCumulative: number;
+  /** intake units since midnight ET */
+  arrivedUnitsToday: number;
+  /** the queue as it stood at midnight ET */
+  queueAtDayStart: number;
+  /** parcels on the dock at midnight ET */
+  stagedAtDayStart: number;
+
   /** live rates the world animates against, units (or arrivals) per minute */
   packRate: number;
   inflowRate: number;
@@ -132,6 +144,10 @@ export function initialFlow(openUnits: number): FlowState {
     shippedToday: 0,
     trucksToday: 0,
     conversationsToday: 0,
+    packedCumulative: 0,
+    arrivedUnitsToday: 0,
+    queueAtDayStart: openUnits,
+    stagedAtDayStart: 64,
     packRate: 0,
     inflowRate: 0,
     shopperRate: 0,
@@ -149,14 +165,6 @@ export function initialFlow(openUnits: number): FlowState {
     backlogAlarm: false,
   };
 }
-
-export const clockLabel = (minute: number) => {
-  const day = Math.floor(minute / 1440) + 1;
-  const m = Math.floor(minute % 1440);
-  const hh = String(Math.floor(m / 60)).padStart(2, "0");
-  const mm = String(Math.floor(m % 60)).padStart(2, "0");
-  return { day, time: `${hh}:${mm}`, label: `Day ${day} · ${hh}:${mm}` };
-};
 
 /* ── Attribution: which styles the packed units belonged to ──────── */
 
@@ -189,9 +197,11 @@ export function stepFlow(
   const minOfDay = next.minute % 1440;
   const crossedMidnight = Math.floor(next.minute / 1440) > Math.floor(prevMinute / 1440);
 
-  /* ── the shift window ─────────────────────────────────────────── */
+  /* ── the shift window (the floor is dark on Sundays) ──────────── */
   const shiftLen = s.staffing.shiftHours * 60 * (s.staffing.secondShift ? 2 : 1);
-  const inShift = minOfDay >= SHIFT_START_MIN && minOfDay < SHIFT_START_MIN + shiftLen;
+  const workday = isWorkday(Math.floor(next.minute / 1440));
+  const inShift =
+    workday && minOfDay >= SHIFT_START_MIN && minOfDay < SHIFT_START_MIN + shiftLen;
 
   if (inShift && !flow.inShift) {
     events.push({
@@ -227,6 +237,10 @@ export function stepFlow(
     next.shippedToday = 0;
     next.trucksToday = 0;
     next.conversationsToday = 0;
+    next.arrivedUnitsToday = 0;
+    // Anchor the new day so every "today" figure reconciles exactly.
+    next.queueAtDayStart = flow.queueUnits;
+    next.stagedAtDayStart = flow.stagedParcels;
   }
 
   /* ── intake: orders arrive around the clock ───────────────────── */
@@ -236,9 +250,11 @@ export function stepFlow(
   const inflowPerMin = (dailyInflowUnits * viralHalo) / 1440;
   const inflowUnits = inflowPerMin * TICK_MINUTES;
 
+  // NB: build on `next`, not `flow` — the midnight reset above must survive.
   next.inflowRate = inflowPerMin;
   next.queueUnits = flow.queueUnits + inflowUnits;
-  next.receivedToday = flow.receivedToday + inflowUnits / PARCEL_UNITS;
+  next.arrivedUnitsToday = next.arrivedUnitsToday + inflowUnits;
+  next.receivedToday = next.receivedToday + inflowUnits / PARCEL_UNITS;
   next.ordersSinceReport = flow.ordersSinceReport + inflowUnits / PARCEL_UNITS;
   next.sinceOrderReport = flow.sinceOrderReport + TICK_MINUTES;
 
@@ -265,8 +281,9 @@ export function stepFlow(
   const packed = Math.min(next.queueUnits, packPerMin * TICK_MINUTES);
   next.packRate = inShift ? packed / TICK_MINUTES : 0;
   next.queueUnits = Math.max(0, next.queueUnits - packed);
-  next.packedToday = flow.packedToday + packed;
-  next.stagedParcels = flow.stagedParcels + packed / PARCEL_UNITS;
+  next.packedToday = next.packedToday + packed;
+  next.packedCumulative = flow.packedCumulative + packed;
+  next.stagedParcels = next.stagedParcels + packed / PARCEL_UNITS;
 
   // attribute what was packed to styles, so inventory actually falls
   if (packed > 0) {
@@ -431,7 +448,7 @@ export function stepFlow(
   const inquiriesPerMin = m.boutique.inquiries / 1440;
   next.chatsSinceReport = flow.chatsSinceReport + inquiriesPerMin * TICK_MINUTES;
   next.sinceChatReport = flow.sinceChatReport + TICK_MINUTES;
-  next.conversationsToday = flow.conversationsToday + inquiriesPerMin * TICK_MINUTES;
+  next.conversationsToday = next.conversationsToday + inquiriesPerMin * TICK_MINUTES;
 
   if (next.sinceChatReport >= 90) {
     const handled = Math.max(1, Math.round(next.chatsSinceReport));
